@@ -1,0 +1,80 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        // ── Firmware ────────────────────────────────────────────────────────
+        {
+            "label": "Firmware: Build",
+            "type": "shell",
+            "command": "idf.py build",
+            "group": { "kind": "build", "isDefault": true },
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Firmware: Flash",
+            "type": "shell",
+            "command": "idf.py -p ${config:idf.port} flash",
+            "group": "build",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "dependsOn": "Firmware: Build"
+        },
+        {
+            "label": "Firmware: Monitor",
+            "type": "shell",
+            "command": "idf.py -p ${config:idf.port} monitor",
+            "group": "build",
+            "presentation": { "reveal": "always", "panel": "dedicated" }
+        },
+        {
+            "label": "Firmware: Flash + Monitor",
+            "type": "shell",
+            "command": "idf.py -p ${config:idf.port} flash monitor",
+            "group": "build",
+            "presentation": { "reveal": "always", "panel": "dedicated" },
+            "dependsOn": "Firmware: Build"
+        },
+
+        // ── Host tests (no hardware) ─────────────────────────────────────────
+        {
+            "label": "Host Tests: Build (native)",
+            "type": "shell",
+            "command": "cd test/host && idf.py --preview set-target linux && idf.py build",
+            "group": "test",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Host Tests: Run (native)",
+            "type": "shell",
+            "command": "./test/host/build/test_host.elf",
+            "group": { "kind": "test", "isDefault": true },
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "dependsOn": "Host Tests: Build (native)"
+        },
+        {
+            "label": "Host Tests: Build + Run (Docker)",
+            "type": "shell",
+            "command": "bash scripts/run_host_tests.sh",
+            "group": "test",
+            "presentation": { "reveal": "always", "panel": "shared" }
+        },
+
+        // ── Target (HIL) tests ───────────────────────────────────────────────
+        {
+            "label": "Target Tests: Build",
+            "type": "shell",
+            "command": "cd test/target && idf.py set-target esp32c6 && idf.py build",
+            "group": "test",
+            "presentation": { "reveal": "always", "panel": "shared" },
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Target Tests: Flash + Monitor",
+            "type": "shell",
+            "command": "cd test/target && idf.py -p ${config:idf.port} flash monitor",
+            "group": "test",
+            "presentation": { "reveal": "always", "panel": "dedicated" },
+            "dependsOn": "Target Tests: Build"
+        }
+    ]
+}

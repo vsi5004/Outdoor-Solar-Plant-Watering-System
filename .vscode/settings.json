@@ -1,0 +1,54 @@
+{
+    // -------------------------------------------------------------------------
+    // ESP-IDF extension settings.
+    // After running "ESP-IDF: Configure ESP-IDF Extension" these will be
+    // auto-updated by the extension with your local install paths.
+    // -------------------------------------------------------------------------
+    "idf.espIdfPath": "C:\\Users\\isirc\\esp\\v5.4\\esp-idf",
+    "idf.toolsPath": "C:\\Users\\isirc\\.espressif",
+    // Update this to match your ESP32-C6 serial port.
+    // Windows: "COM3"  |  Linux/macOS: "/dev/ttyUSB0" or "/dev/cu.usbserial-*"
+    "idf.port": "COM3",
+    "idf.target": "esp32c6",
+    "idf.flashBaudRate": "460800",
+    // ESP32-C6 with built-in USB-JTAG
+    "idf.openOcdConfigs": [
+        "board/esp32c6-builtin.cfg"
+    ],
+    "editor.formatOnSave": true,
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools"
+    },
+    "[c]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools"
+    },
+    "idf.currentSetup": "C:\\Users\\isirc\\esp\\v5.4\\esp-idf",
+    "idf.portWin": "COM17",
+    "idf.customExtraVars": {
+        "0": "{",
+        "1": "\"",
+        "2": "I",
+        "3": "D",
+        "4": "F",
+        "5": "_",
+        "6": "T",
+        "7": "A",
+        "8": "R",
+        "9": "G",
+        "10": "E",
+        "11": "T",
+        "12": "\"",
+        "13": ":",
+        "14": "\"",
+        "15": "e",
+        "16": "s",
+        "17": "p",
+        "18": "3",
+        "19": "2",
+        "20": "s",
+        "21": "3",
+        "22": "\"",
+        "23": "}",
+        "IDF_TARGET": "esp32c6"
+    }
+}

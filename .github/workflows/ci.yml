@@ -1,0 +1,28 @@
+name: Host Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  host-tests:
+    name: Build and run host-based Unity tests
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.4.1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build host tests (linux target)
+        working-directory: test/host
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py --preview set-target linux build
+
+      - name: Run host tests
+        working-directory: test/host
+        run: ./build/test_host.elf

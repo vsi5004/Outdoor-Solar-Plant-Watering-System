@@ -1,0 +1,24 @@
+# Production sdkconfig defaults for plant-waterer (ESP32-C6).
+# Values here are applied when no sdkconfig exists yet.
+# Run `idf.py menuconfig` to override; committed sdkconfig takes precedence.
+
+# ── Zigbee ────────────────────────────────────────────────────────────────────
+# Enable the Zigbee stack and configure the device as a Full Function Device
+# (router role) so it can relay traffic for other Zigbee nodes on the network.
+CONFIG_ZB_ENABLED=y
+CONFIG_ZB_ZCZR=y
+
+# ── CPU & timing ─────────────────────────────────────────────────────────────
+# 160 MHz gives the Zigbee stack enough headroom alongside the watering logic.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
+
+# 1 ms FreeRTOS tick — pdMS_TO_TICKS() calls throughout the firmware assume
+# this resolution.
+CONFIG_FREERTOS_HZ=1000
+
+# ── Stack sizes ───────────────────────────────────────────────────────────────
+# app_main creates tasks and then returns; 3 kB is sufficient.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=3072
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

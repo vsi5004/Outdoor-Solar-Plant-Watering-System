@@ -1,0 +1,32 @@
+# ESP-IDF build artifacts
+build/
+*/build/
+**/build/
+
+# Generated config — let idf.py regenerate; commit sdkconfig.defaults instead
+sdkconfig
+sdkconfig.old
+*/sdkconfig
+*/sdkconfig.old
+
+# Managed components — downloaded by idf_component_manager; do not commit
+managed_components/
+
+# Local tool configs
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# IDE
+*.swp
+*.swo

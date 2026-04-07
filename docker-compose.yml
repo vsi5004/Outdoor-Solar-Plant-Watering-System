@@ -1,0 +1,16 @@
+services:
+  host-tests:
+    image: espressif/idf:v5.4.1
+    volumes:
+      - .:/project
+    working_dir: /project
+    command: >
+      bash -c "
+        set -euo pipefail &&
+        . /opt/esp/idf/export.sh &&
+        cd test/host &&
+        idf.py --preview set-target linux build &&
+        echo '' &&
+        echo '>>> Executing test binary...' &&
+        ./build/test_host.elf
+      "
