@@ -7,23 +7,29 @@ static const char* TAG = "EspAdcChannel";
 
 EspAdcChannel::EspAdcChannel(adc_oneshot_unit_handle_t unit,
                              adc_channel_t             ch,
-                             adc_cali_handle_t         cali)
-    : unit_(unit), ch_(ch), cali_(cali)
+                             adc_cali_handle_t         cali,
+                             uint8_t                   samples)
+    : unit_(unit), ch_(ch), cali_(cali), samples_(samples ? samples : 1)
 {
 }
 
 float EspAdcChannel::readMillivolts()
 {
-    int raw = 0;
-    ESP_ERROR_CHECK(adc_oneshot_read(unit_, ch_, &raw));
+    int32_t sum = 0;
+    for (uint8_t i = 0; i < samples_; ++i) {
+        int raw = 0;
+        ESP_ERROR_CHECK(adc_oneshot_read(unit_, ch_, &raw));
+        sum += raw;
+    }
+    const int raw_avg = static_cast<int>(sum / samples_);
 
     if (cali_) {
         int mv = 0;
-        ESP_ERROR_CHECK(adc_cali_raw_to_voltage(cali_, raw, &mv));
+        ESP_ERROR_CHECK(adc_cali_raw_to_voltage(cali_, raw_avg, &mv));
         return static_cast<float>(mv);
     }
     // No calibration — rough linear approximation for 12 dB (0–3100 mV range).
-    return static_cast<float>(raw) * (3100.0f / 4095.0f);
+    return static_cast<float>(raw_avg) * (3100.0f / 4095.0f);
 }
 
 // ── Unit-level helpers ────────────────────────────────────────────────────────

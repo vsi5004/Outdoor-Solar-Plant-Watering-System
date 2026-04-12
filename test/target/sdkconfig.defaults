@@ -1,0 +1,6 @@
+# Test-binary overrides — not for production firmware.
+#
+# unity_run_menu() blocks in a UART busy-wait, which prevents the IDLE task
+# from running and triggers the task watchdog.  Disabling idle-task monitoring
+# here is safe because we never sleep or deep-idle during target tests.
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n

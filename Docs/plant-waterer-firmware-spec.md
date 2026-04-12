@@ -253,13 +253,46 @@ Use the ESP-IDF **PCNT** (Pulse Counter) peripheral — hardware accelerated, ze
 
 ---
 
-## Driver: Float Sensor (float_sensor.h/.c)
+## Driver: Float Sensor (float_sensor.hpp/.cpp)
 
-- Variable resistance sensor on `FLOAT_SENSOR_PIN` (ADC1)
+- Variable resistance sensor on GPIO0 (ADC1_CH0)
 - Use `adc_oneshot` API with `adc_cali` for voltage conversion
 - Map calibrated voltage range to 0–100% water level
-- Calibration points (full bucket / empty bucket) stored in config or NVS
-- Expose: `float_sensor_get_pct(void)` → 0–100
+- Expose: `FloatSensor::getPercent()` → 0–100
+
+### Circuit
+
+Resistive voltage divider: 330 Ω fixed resistor from 3.3 V to the ADC pin,
+sensor (variable resistance) from the ADC pin to GND.
+
+```
+3.3V
+ │
+[330Ω]
+ │
+ ├──── GPIO0 / ADC1_CH0
+ │
+[R_sensor]   30 Ω (empty) → 230 Ω (full)
+ │
+GND
+```
+
+Higher fill level → higher sensor resistance → higher ADC voltage.
+
+### Calibration (measured)
+
+| Level | ADC voltage |
+|-------|------------|
+| Empty | 315 mV     |
+| Full  | 1453 mV    |
+
+Values stored in `config::sensor::FLOAT_EMPTY_MV` / `FLOAT_FULL_MV`.
+
+### Oversampling
+
+`EspAdcChannel` averages `config::adc::OVERSAMPLE_COUNT` (5) raw conversions per
+`readMillivolts()` call to reduce ADC noise. Averaging is performed on raw counts
+before the calibration curve is applied.
 
 ---
 

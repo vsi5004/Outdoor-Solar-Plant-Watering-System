@@ -112,6 +112,30 @@ or type `a` + `Enter` to run all tests immediately.
 
 From VS Code: **Terminal → Run Task → Target Tests: Flash + Monitor**.
 
+#### Adding target tests
+
+`TEST_CASE` registrations are placed in linker sections by the preprocessor.
+Because the linker only pulls in object files that contain a directly referenced
+symbol, any test file whose only content is `TEST_CASE` macros will be silently
+dropped unless something forces it to link. The fix is a trivial registration
+function:
+
+1. Add `void register_<module>_tests() {}` at the top of `test_<module>.cpp`.
+2. Declare and call it from `app_main` in `test_runner.cpp`:
+
+```cpp
+extern void register_float_sensor_tests();
+
+extern "C" void app_main(void) {
+    register_float_sensor_tests();
+    unity_run_menu();
+}
+```
+
+3. Add the `.cpp` file and any required driver sources to `SRCS` in
+   `test/target/main/CMakeLists.txt` using `${CMAKE_CURRENT_LIST_DIR}`-relative
+   absolute paths.
+
 ---
 
 ## Adding New Tests
