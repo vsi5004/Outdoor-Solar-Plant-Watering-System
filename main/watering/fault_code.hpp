@@ -9,6 +9,7 @@ enum class FaultCode : uint8_t {
     LowWater       = 2,  // Reservoir below MIN_WATER_LEVEL_PCT
     PrimeTimeout   = 3,  // No flow pulses within PUMP_PRIME_TIMEOUT_MS
     DryRun         = 4,  // Pump IS current below DRY_RUN_MA while dispensing
-    MaxDuration    = 5,  // Watering exceeded MAX_DISPENSE_MS hard cap
-    InvalidRequest = 6,  // duration_sec == 0 or zone out of range
+    MaxDuration       = 5,  // Watering exceeded MAX_DISPENSE_MS hard cap
+    InvalidRequest    = 6,  // duration_sec == 0 or zone out of range
+    LoadEnableFailed  = 7,  // Renogy setLoad(true) returned false
 };

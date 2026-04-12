@@ -182,8 +182,14 @@ static void renogyTask(void* /*arg*/)
         if (s_renogy.poll()) {
             const RenogyData d = s_renogy.getData();
             ZbDevice::reportBattery(static_cast<uint8_t>(d.batterySoc), d.batteryVoltage);
-            ESP_LOGD(TAG, "Renogy: SOC %u%% %.1fV PV %.1fV %uW",
-                     d.batterySoc, d.batteryVoltage, d.pvVoltage, d.chargingPower);
+            ZbDevice::reportSolarData(d.maxChargingPowerToday,
+                                      d.dailyGenerationWh,
+                                      d.dailyConsumptionWh,
+                                      d.chargingStatus);
+            ESP_LOGD(TAG, "Renogy: SOC %u%% %.1fV PV %.1fV %uW maxChg=%uW gen=%uWh con=%uWh status=%u",
+                     d.batterySoc, d.batteryVoltage, d.pvVoltage, d.pvPower,
+                     d.maxChargingPowerToday, d.dailyGenerationWh, d.dailyConsumptionWh,
+                     d.chargingStatus);
         } else {
             ESP_LOGW(TAG, "Renogy poll failed");
         }

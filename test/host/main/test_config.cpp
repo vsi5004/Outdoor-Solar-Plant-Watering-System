@@ -29,8 +29,10 @@ static void test_pump_hard_cap_exceeds_prime_timeout(void)
 
 static void test_float_sensor_calibration_range_valid(void)
 {
-    TEST_ASSERT_GREATER_THAN(config::sensor::FLOAT_EMPTY_MV,
-                             config::sensor::FLOAT_FULL_MV);
+    // Sensor is the lower leg of a voltage divider: lower resistance when full
+    // → lower voltage when full. EMPTY_MV > FULL_MV is the correct relationship.
+    TEST_ASSERT_GREATER_THAN(config::sensor::FLOAT_FULL_MV,
+                             config::sensor::FLOAT_EMPTY_MV);
 }
 
 static void test_ml_per_pulse_positive(void)

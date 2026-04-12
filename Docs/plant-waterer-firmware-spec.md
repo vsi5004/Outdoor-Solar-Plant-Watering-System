@@ -277,14 +277,15 @@ sensor (variable resistance) from the ADC pin to GND.
 GND
 ```
 
-Higher fill level → higher sensor resistance → higher ADC voltage.
+Higher fill level → lower sensor resistance → lower ADC voltage.
+(FLOAT_EMPTY_MV > FLOAT_FULL_MV — the FloatSensor math handles the inverted range.)
 
 ### Calibration (measured)
 
 | Level | ADC voltage |
 |-------|------------|
-| Empty | 315 mV     |
-| Full  | 1453 mV    |
+| Empty | 1361 mV    |
+| Full  | 315 mV     |
 
 Values stored in `config::sensor::FLOAT_EMPTY_MV` / `FLOAT_FULL_MV`.
 
@@ -296,44 +297,78 @@ before the calibration curve is applied.
 
 ---
 
-## Driver: Renogy Modbus RTU (renogy.h/.c)
+## Driver: Renogy Modbus RTU (renogy_driver.hpp/.cpp)
 
-**Protocol:** Modbus RTU, 9600 baud, 8N1, function code 0x03 (read holding registers)
+**Protocol:** Modbus RTU, 9600 baud 8N1, device address 0x01.
 
-**Key Registers:**
+`poll()` issues three FC 0x03 read-holding-registers requests per cycle:
 
-| Register | Description | Scale |
+| Block | Start | Count | Fields |
+|---|---|---|---|
+| Real-time | 0x0100 | 10 | SOC, voltage, current, temp, load power, PV voltage/current/power |
+| Historical | 0x010B | 10 | Max charging power today, daily generation Wh, daily consumption Wh |
+| Status | 0x0120 | 1 | Charging status (low byte) |
+
+**Real-time register map (block 0x0100–0x0109):**
+
+| Register | Field | Scale |
 |---|---|---|
-| 0x0101 | Battery SOC | % |
-| 0x0102 | Battery voltage | ×0.1V |
-| 0x0103 | Charging current | ×0.01A |
-| 0x0107 | Controller temperature | high byte = °C |
-| 0x0300 | PV panel voltage | ×0.1V |
-| 0x0302 | Charging power | W |
-| 0x0310 | Load current | ×0.01A |
+| 0x0100 | Battery SOC | raw = % (0–100) |
+| 0x0101 | Battery voltage | ×0.1 V |
+| 0x0102 | Battery current | ×0.01 A, signed |
+| 0x0103 high byte | Controller temperature | bit 7 = sign, bits 6:0 = °C magnitude |
+| 0x0106 | Load power | W |
+| 0x0107 | PV voltage | ×0.1 V |
+| 0x0108 | PV current | ×0.01 A |
+| 0x0109 | PV power | W |
+
+**Historical register map (block 0x010B–0x0114, selected fields):**
+
+| Register | Field | Scale |
+|---|---|---|
+| 0x010F | Max charging power today | W |
+| 0x0113 | Daily power generation | Wh (unit = kWh/1000) |
+| 0x0114 | Daily power consumption | Wh (unit = kWh/1000) |
+
+**Status register (0x0120):**
+
+| Bits | Field | Values |
+|---|---|---|
+| Low byte | Charging status | 0=not started, 1=startup, 2=MPPT, 3=equalisation, 4=boost, 5=float, 6=current limiting |
+
+**Load output control:** FC 0x06 (write single register).
+`setLoad(bool on)` first writes register `0xE01D = 0x000F` to set manual mode, then writes `0x010A = 0x0001` (on) or `0x0000` (off). Both writes validate the controller's echo response.
+
+> **Note:** The Wanderer 10A echoes FC 0x06 frames for all addresses but does not
+> persist the mode register write. Load mode must be set to Manual (0x0F) via the
+> physical button on the controller before Modbus load commands take effect.
+
+**Data snapshot struct:**
+
+```cpp
+struct RenogyData {
+    uint16_t batterySoc;             // % (0–100)
+    float    batteryVoltage;         // V
+    float    batteryCurrent;         // A (positive = charging)
+    float    pvVoltage;              // V
+    float    pvCurrent;              // A
+    uint16_t pvPower;                // W
+    uint16_t loadPower;              // W
+    float    controllerTemp;         // °C
+    uint16_t maxChargingPowerToday;  // W
+    uint16_t dailyGenerationWh;      // Wh
+    uint16_t dailyConsumptionWh;     // Wh
+    uint8_t  chargingStatus;         // 0–6 enum
+    uint32_t lastUpdateMs;
+};
+```
 
 **Implementation notes:**
-- Use dedicated UART peripheral (`UART_NUM_1`), not bit-banged
-- CRC16 (polynomial 0xA001, init 0xFFFF)
-- Request: `[addr, 0x03, reg_hi, reg_lo, count_hi, count_lo, crc_lo, crc_hi]`
-- Response timeout: 500ms
-- Validate CRC on response before using data
-- Read 0x0100–0x010F in one request, then 0x0300–0x0302 in a second
-- Poll every `RENOGY_POLL_INTERVAL_MS` (30s) from a dedicated low-priority task
-- Store last-good data in a mutex-protected struct; other tasks read from that
-
-```c
-typedef struct {
-    uint16_t battery_soc;       // %
-    float    battery_voltage;   // V
-    float    charging_current;  // A
-    float    pv_voltage;        // V
-    uint16_t charging_power;    // W
-    float    load_current;      // A
-    int8_t   controller_temp;   // °C
-    uint32_t last_update_ms;    // xTaskGetTickCount result at last successful poll
-} renogy_data_t;
-```
+- Dedicated UART peripheral (UART_NUM_1), not bit-banged
+- CRC-16/IBM: polynomial 0xA001, init 0xFFFF
+- Response timeout: 500 ms per block
+- On any block failure `poll()` returns false and previously stored data is unchanged
+- Thread-safe: `getData()` returns a mutex-protected copy; callable from any task
 
 ---
 
@@ -480,17 +515,21 @@ extern QueueHandle_t water_queue;  // xQueueCreate(5, sizeof(watering_request_t)
 
 ## Fault Codes
 
-```c
-typedef enum {
-    FAULT_NONE            = 0,
-    FAULT_LOW_BATTERY     = 1,
-    FAULT_LOW_WATER       = 2,
-    FAULT_PRIME_TIMEOUT   = 3,
-    FAULT_DRY_RUN         = 4,
-    FAULT_MAX_DURATION    = 5,
-    FAULT_INVALID_REQUEST = 6,
-} fault_code_t;
+```cpp
+enum class FaultCode : uint8_t {
+    None             = 0,
+    LowBattery       = 1,  // Battery SOC below MIN_BATTERY_SOC_PCT
+    LowWater         = 2,  // Reservoir below MIN_WATER_LEVEL_PCT
+    PrimeTimeout     = 3,  // No flow pulses within PUMP_PRIME_TIMEOUT_MS
+    DryRun           = 4,  // Pump IS current below DRY_RUN_MA while dispensing
+    MaxDuration      = 5,  // Watering exceeded MAX_DISPENSE_MS hard cap
+    InvalidRequest   = 6,  // duration_sec == 0 or zone out of range
+    LoadEnableFailed = 7,  // Renogy setLoad(true) returned false before pump start
+};
 ```
+
+Values are stable — do not reorder. HA automations may key off the integer value
+reported on EP 41.
 
 ---
 
@@ -540,28 +579,23 @@ HA sends `Off` command only to abort an in-progress cycle.
 
 ### Endpoint Layout
 
-```
-EP 1–5   Zone 1–5
-         ├── Analog Output  [WRITABLE]  duration_seconds (10–1800)
-         ├── On/Off cluster [WRITABLE]  On=start, Off=abort
-         ├── Analog Input   [READABLE]  zone_status (0=idle,1=priming,2=running,3=fault)
-         └── Analog Input   [READABLE]  ml_dispensed (live, this session)
+| EP | Cluster | Role | Content |
+|---|---|---|---|
+| 1 | Basic + Identify | Server | Mandatory Zigbee device descriptors |
+| 10 | On/Off | Server | Zone 1 active state (on = Priming or Running) |
+| 11 | On/Off | Server | Zone 2 active state |
+| 12 | On/Off | Server | Zone 3 active state |
+| 13 | On/Off | Server | Zone 4 active state |
+| 14 | On/Off | Server | Zone 5 active state |
+| 20 | Power Configuration | Server | `BatteryPercentageRemaining` (SOC × 2), `BatteryVoltage` (V × 10) |
+| 21 | Analog Input | Server | Max charging power today (W) |
+| 22 | Analog Input | Server | Daily solar generation (Wh) |
+| 23 | Analog Input | Server | Daily power consumption (Wh) |
+| 41 | Multistate Input | Server | `FaultCode` (8 states, 0 = None) |
+| 42 | Multistate Input | Server | Charging status (7 states: 0=not started … 5=float … 6=current limiting) |
 
-EP 6     Pump
-         └── On/Off cluster [READABLE]  reflects actual pump state
-
-EP 10    Analog Input  water_level_pct
-EP 11    Analog Input  flow_rate_ml_per_min
-EP 12    Analog Input  session_volume_ml
-
-EP 20    Power Config  battery_soc_pct       ← maps to HA battery entity
-EP 21    Analog Input  battery_voltage_v
-EP 22    Analog Input  pv_voltage_v
-EP 23    Analog Input  pv_power_w
-
-EP 30    Analog Input  pump_current_ma
-EP 31    Analog Input  fault_code
-```
+All Renogy data comes from the background `renogy_task` polling at 30s intervals.
+Zone on/off states are pushed from the `watering_task` on every state change.
 
 ### Status Enum
 

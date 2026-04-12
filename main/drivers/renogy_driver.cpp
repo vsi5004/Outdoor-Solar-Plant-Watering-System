@@ -25,28 +25,45 @@ RenogyDriver::~RenogyDriver()
 
 bool RenogyDriver::poll()
 {
-    // Block 1: 0x0100–0x010F (16 registers)
-    uint16_t block1[16] = {};
-    if (!readRegisters(0x0100, 16, block1)) {
+    // Block 1: real-time telemetry (0x0100–0x0109, 10 registers).
+    uint16_t r[10] = {};
+    if (!readRegisters(0x0100, 10, r)) {
         return false;
     }
 
-    // Block 2: 0x0300–0x0310 (17 registers)
-    uint16_t block2[17] = {};
-    if (!readRegisters(0x0300, 17, block2)) {
+    // Block 2: daily historical data (0x010B–0x0114, 10 registers).
+    uint16_t h[10] = {};
+    if (!readRegisters(0x010B, 10, h)) {
         return false;
     }
+
+    // Block 3: status register (0x0120, 1 register).
+    uint16_t s[1] = {};
+    if (!readRegisters(0x0120, 1, s)) {
+        return false;
+    }
+
+    // Controller temp (0x0103): high byte, bit 7 = sign, bits 6:0 = magnitude °C.
+    const uint8_t tempHi  = static_cast<uint8_t>(r[3] >> 8);
+    const float   tempMag = static_cast<float>(tempHi & 0x7F);
 
     RenogyData d{};
-    d.batterySoc      = block1[0x0101 - 0x0100];
-    d.batteryVoltage  = static_cast<float>(block1[0x0102 - 0x0100]) * 0.1f;
-    d.chargingCurrent = static_cast<float>(block1[0x0103 - 0x0100]) * 0.01f;
-    // Controller temp: high byte of register 0x0107
-    d.controllerTemp  = static_cast<int8_t>((block1[0x0107 - 0x0100] >> 8) & 0xFF);
-    d.pvVoltage       = static_cast<float>(block2[0x0300 - 0x0300]) * 0.1f;
-    d.chargingPower   = block2[0x0302 - 0x0300];
-    d.loadCurrent     = static_cast<float>(block2[0x0310 - 0x0300]) * 0.01f;
-    d.lastUpdateMs    = static_cast<uint32_t>(pdTICKS_TO_MS(xTaskGetTickCount()));
+    // Real-time
+    d.batterySoc     = r[0];                                                    // 0x0100
+    d.batteryVoltage = static_cast<float>(r[1]) * 0.1f;                        // 0x0101
+    d.batteryCurrent = static_cast<float>(static_cast<int16_t>(r[2])) * 0.01f; // 0x0102 signed
+    d.controllerTemp = (tempHi & 0x80) ? -tempMag : tempMag;                   // 0x0103 high byte
+    d.loadPower      = r[6];                                                    // 0x0106 W
+    d.pvVoltage      = static_cast<float>(r[7]) * 0.1f;                        // 0x0107
+    d.pvCurrent      = static_cast<float>(r[8]) * 0.01f;                       // 0x0108
+    d.pvPower        = r[9];                                                    // 0x0109
+    // Historical
+    d.maxChargingPowerToday = h[4];                                             // 0x010F
+    d.dailyGenerationWh     = h[8];                                             // 0x0113
+    d.dailyConsumptionWh    = h[9];                                             // 0x0114
+    // Status
+    d.chargingStatus         = static_cast<uint8_t>(s[0] & 0xFF);              // 0x0120 low byte
+    d.lastUpdateMs           = static_cast<uint32_t>(pdTICKS_TO_MS(xTaskGetTickCount()));
 
     xSemaphoreTake(mutex_, portMAX_DELAY);
     data_ = d;
@@ -91,8 +108,40 @@ void RenogyDriver::buildRequest(uint8_t* buf, uint8_t addr,
     buf[4] = 0x00;
     buf[5] = count;
     const uint16_t crc = crc16(buf, 6);
-    buf[6] = static_cast<uint8_t>(crc & 0xFF);  // CRC lo byte
-    buf[7] = static_cast<uint8_t>(crc >> 8);     // CRC hi byte
+    buf[6] = static_cast<uint8_t>(crc & 0xFF);
+    buf[7] = static_cast<uint8_t>(crc >> 8);
+}
+
+void RenogyDriver::buildWriteRequest(uint8_t* buf, uint8_t addr,
+                                     uint16_t reg, uint16_t value)
+{
+    buf[0] = addr;
+    buf[1] = 0x06; // function code: write single register
+    buf[2] = static_cast<uint8_t>(reg >> 8);
+    buf[3] = static_cast<uint8_t>(reg & 0xFF);
+    buf[4] = static_cast<uint8_t>(value >> 8);
+    buf[5] = static_cast<uint8_t>(value & 0xFF);
+    const uint16_t crc = crc16(buf, 6);
+    buf[6] = static_cast<uint8_t>(crc & 0xFF);
+    buf[7] = static_cast<uint8_t>(crc >> 8);
+}
+
+// ── Public API (continued) ────────────────────────────────────────────────────
+
+bool RenogyDriver::readSingleRegister(uint16_t reg, uint16_t& out)
+{
+    return readRegisters(reg, 1, &out);
+}
+
+bool RenogyDriver::setLoad(bool on)
+{
+    // Register 0xE01D controls the load working mode. The controller defaults
+    // to light-control mode (0x00) and ignores writes to the load on/off
+    // register (0x010A) unless mode is first set to Manual (0x0F).
+    if (!writeRegister(0xE01D, 0x000Fu)) {
+        return false;
+    }
+    return writeRegister(0x010A, on ? 1u : 0u);
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -117,6 +166,39 @@ bool RenogyDriver::readRegisters(uint16_t startReg, uint8_t count, uint16_t* out
 
     return parseResponse(response, responseLen,
                          config::renogy::MODBUS_ADDR, count, out);
+}
+
+bool RenogyDriver::writeRegister(uint16_t reg, uint16_t value)
+{
+    uint8_t request[8];
+    buildWriteRequest(request, config::renogy::MODBUS_ADDR, reg, value);
+
+    uart_.flushRx();
+    uart_.write(request, sizeof(request));
+
+    // Normal response: controller echoes the request frame exactly (8 bytes).
+    uint8_t response[8] = {};
+    const size_t received = uart_.read(response, sizeof(response),
+                                       config::renogy::RESPONSE_TIMEOUT_MS);
+    if (received != sizeof(response)) {
+        return false;
+    }
+
+    // Validate CRC and confirm the echo matches what we sent.
+    const uint16_t expectedCrc = crc16(response, 6);
+    const uint16_t frameCrc    = static_cast<uint16_t>(response[6]) |
+                                 (static_cast<uint16_t>(response[7]) << 8);
+    if (expectedCrc != frameCrc) {
+        return false;
+    }
+
+    // Echo must match: same addr, FC, register address, and value.
+    return (response[0] == request[0] &&
+            response[1] == request[1] &&
+            response[2] == request[2] &&
+            response[3] == request[3] &&
+            response[4] == request[4] &&
+            response[5] == request[5]);
 }
 
 bool RenogyDriver::parseResponse(const uint8_t* buf, size_t len,

@@ -141,11 +141,12 @@ namespace config
     namespace sensor
     {
         // ADC millivolt readings at the extremes of the reservoir.
-        // CALIBRATE: read float_sensor ADC raw at completely empty and completely
-        //            full reservoir; convert to mV using the adc_cali API.
-        //            Consider persisting calibrated values to NVS.
-        constexpr float FLOAT_EMPTY_MV = 315.0f;
-        constexpr float FLOAT_FULL_MV = 1453.0f;
+        // The sensor has lower resistance when full, so the voltage divider
+        // (sensor as lower leg) gives a higher voltage when empty and lower
+        // voltage when full: FLOAT_EMPTY_MV > FLOAT_FULL_MV.
+        // CALIBRATE: measure with reservoir completely empty and completely full.
+        constexpr float FLOAT_EMPTY_MV = 1407.0f;
+        constexpr float FLOAT_FULL_MV = 315.0f;
     } // namespace sensor
 
 } // namespace config
@@ -172,8 +173,8 @@ static_assert(config::pump::PRIME_PULSE_COUNT > 0,
 static_assert(config::flow::ML_PER_PULSE > 0.0f,
               "ML_PER_PULSE must be positive");
 
-static_assert(config::sensor::FLOAT_FULL_MV > config::sensor::FLOAT_EMPTY_MV,
-              "FLOAT_FULL_MV must be greater than FLOAT_EMPTY_MV");
+static_assert(config::sensor::FLOAT_FULL_MV != config::sensor::FLOAT_EMPTY_MV,
+              "FLOAT_FULL_MV and FLOAT_EMPTY_MV must differ");
 
 static_assert(config::ledc::RESOLUTION_BITS >= 1 && config::ledc::RESOLUTION_BITS <= 14,
               "LEDC resolution must be 1–14 bits (ESP32-C6 hardware limit)");

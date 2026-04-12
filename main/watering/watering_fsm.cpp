@@ -36,6 +36,11 @@ bool WateringFsm::request(const WateringRequest& req, uint32_t nowMs)
         return false;
     }
 
+    if (!renogy_.setLoad(true)) {
+        enterFault(FaultCode::LoadEnableFailed);
+        return false;
+    }
+
     req_              = req;
     targetDurationMs_ = static_cast<uint32_t>(req.durationSec) * 1000u;
     deliveredMl_      = 0u;
@@ -128,6 +133,7 @@ void WateringFsm::stopAll()
 {
     pump_.stop();
     zones_.closeAll();
+    renogy_.setLoad(false);
 }
 
 void WateringFsm::enterFault(FaultCode code)

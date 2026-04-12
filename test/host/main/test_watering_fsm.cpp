@@ -83,12 +83,37 @@ static void test_request_rejected_when_tank_low(void)
     TEST_ASSERT_EQUAL(FaultCode::LowWater, f.fsm.getLastFault());
 }
 
+static void test_load_enable_failure_causes_fault(void)
+{
+    Fixture f;
+    f.renogy.setLoadResult_ = false;
+    TEST_ASSERT_FALSE(f.sendRequest());
+    TEST_ASSERT_EQUAL(FaultCode::LoadEnableFailed, f.fsm.getLastFault());
+}
+
+static void test_load_enable_failure_does_not_start_pump(void)
+{
+    Fixture f;
+    f.renogy.setLoadResult_ = false;
+    f.sendRequest();
+    TEST_ASSERT_EQUAL(0, f.pump.lastSpeed_);
+    TEST_ASSERT_FALSE(f.zones.isOpen(ZoneId::Zone1));
+}
+
 // ── request() happy path ──────────────────────────────────────────────────────
 
 static void test_valid_request_returns_true(void)
 {
     Fixture f;
     TEST_ASSERT_TRUE(f.sendRequest());
+}
+
+static void test_valid_request_enables_renogy_load(void)
+{
+    Fixture f;
+    f.sendRequest();
+    TEST_ASSERT_TRUE(f.renogy.lastLoadState_);
+    TEST_ASSERT_EQUAL(1, f.renogy.setLoadCallCount_);
 }
 
 static void test_valid_request_opens_zone(void)
@@ -266,6 +291,32 @@ static void test_cancel_stops_pump_and_closes_zones(void)
     TEST_ASSERT_FALSE(f.zones.isOpen(ZoneId::Zone1));
 }
 
+static void test_cancel_disables_renogy_load(void)
+{
+    Fixture f;
+    f.sendRequest();
+    f.simulatePrime();
+    f.fsm.cancel();
+    TEST_ASSERT_FALSE(f.renogy.lastLoadState_);
+}
+
+static void test_fault_disables_renogy_load(void)
+{
+    Fixture f;
+    f.sendRequest();
+    f.advanceMs(config::pump::PRIME_TIMEOUT_MS); // → PrimeTimeout fault
+    TEST_ASSERT_FALSE(f.renogy.lastLoadState_);
+}
+
+static void test_watering_completion_disables_renogy_load(void)
+{
+    Fixture f;
+    f.sendRequest(ZoneId::Zone1, 5);
+    f.simulatePrime();
+    f.advanceMs(5000u);
+    TEST_ASSERT_FALSE(f.renogy.lastLoadState_);
+}
+
 static void test_cancel_in_idle_is_safe(void)
 {
     Fixture f;
@@ -344,7 +395,10 @@ void run_watering_fsm_tests(void)
     RUN_TEST(test_request_rejected_when_duration_zero);
     RUN_TEST(test_request_rejected_when_battery_low);
     RUN_TEST(test_request_rejected_when_tank_low);
+    RUN_TEST(test_load_enable_failure_causes_fault);
+    RUN_TEST(test_load_enable_failure_does_not_start_pump);
     RUN_TEST(test_valid_request_returns_true);
+    RUN_TEST(test_valid_request_enables_renogy_load);
     RUN_TEST(test_valid_request_opens_zone);
     RUN_TEST(test_valid_request_starts_pump);
     RUN_TEST(test_valid_request_resets_flow_meter);
@@ -363,6 +417,9 @@ void run_watering_fsm_tests(void)
     RUN_TEST(test_cancel_during_priming_returns_to_idle);
     RUN_TEST(test_cancel_during_watering_returns_to_idle);
     RUN_TEST(test_cancel_stops_pump_and_closes_zones);
+    RUN_TEST(test_cancel_disables_renogy_load);
+    RUN_TEST(test_fault_disables_renogy_load);
+    RUN_TEST(test_watering_completion_disables_renogy_load);
     RUN_TEST(test_cancel_in_idle_is_safe);
     RUN_TEST(test_cancel_in_fault_is_noop);
     RUN_TEST(test_cancel_captures_delivered_ml);

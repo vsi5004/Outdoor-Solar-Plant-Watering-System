@@ -249,20 +249,16 @@ plant-waterer/
 
 ## Endpoint Layout (Zigbee)
 
-| EP | Entity | Cluster | Access |
-|---|---|---|---|
-| 1-5 | Zone 1-5 | On/Off + Analog Output (duration) | R/W |
-| 6 | Pump | On/Off | R |
-| 10-14 | Zone 1-5 status | Analog Input | R |
-| 15-19 | Zone 1-5 ml dispensed | Analog Input | R |
-| 20 | Water level % | Analog Input | R |
-| 21 | Flow rate mL/min | Analog Input | R |
-| 30 | Battery SOC % | Power Config | R |
-| 31 | Battery voltage V | Analog Input | R |
-| 32 | PV voltage V | Analog Input | R |
-| 33 | PV power W | Analog Input | R |
-| 40 | Pump current mA | Analog Input | R |
-| 41 | Fault code | Analog Input | R |
+| EP | Cluster | Content |
+|---|---|---|
+| 1 | Basic + Identify | Mandatory device descriptors |
+| 10–14 | On/Off | Zone 1–5 active state (on = Priming or Running) |
+| 20 | Power Configuration | Battery SOC (`BatteryPercentageRemaining`) + voltage (`BatteryVoltage`) |
+| 21 | Analog Input | Max charging power today (W) |
+| 22 | Analog Input | Daily solar generation (Wh) |
+| 23 | Analog Input | Daily power consumption (Wh) |
+| 41 | Multistate Input | Fault code (8 states — see `fault_code.hpp`) |
+| 42 | Multistate Input | Charging status (0=off, 2=MPPT, 5=float, etc.) |
 
 ---
 
