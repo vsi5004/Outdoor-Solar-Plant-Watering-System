@@ -132,9 +132,10 @@ namespace config
     namespace flow
     {
         // mL per rising-edge pulse on the flow meter output.
-        // CALIBRATE: pump a known volume into a measuring container and divide
-        //            by the raw pulse count reported by flow_meter_get_pulses().
-        constexpr float ML_PER_PULSE = 2.1f; // [CALIBRATE]
+        // Derived from datasheet: F = 23.6 × Q (Hz, L/min)
+        //   mL/pulse = 1000 / (60 × 23.6) ≈ 0.706 mL/pulse (flow-rate independent)
+        // Verify empirically: pump a known volume and divide by pulse count.
+        constexpr float ML_PER_PULSE = 0.706f;
     } // namespace flow
 
     // ── Float sensor calibration ─────────────────────────────────────────────────

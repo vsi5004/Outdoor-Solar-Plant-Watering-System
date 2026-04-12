@@ -133,8 +133,9 @@ All hardware mappings defined in one place. Based on the ESP32-C6-DevKitC-1 pino
 #define MIN_BATTERY_SOC_PCT     15
 #define MIN_WATER_LEVEL_PCT     10
 
-// Flow calibration (measure empirically)
-#define ML_PER_PULSE            2.1f
+// Flow calibration — derived from datasheet F = 23.6 × Q (Hz, L/min)
+// mL/pulse = 1000 / (60 × 23.6) ≈ 0.706
+constexpr float ML_PER_PULSE = 0.706f;
 
 // Renogy polling
 #define RENOGY_POLL_INTERVAL_MS 30000
@@ -233,20 +234,33 @@ float bts7960_read_current_ma(bts7960_t *dev);
 
 ---
 
-## Driver: Flow Meter (flow_meter.h/.c)
+## Driver: Flow Meter (flow_meter.hpp/.cpp)
 
-Use the ESP-IDF **PCNT** (Pulse Counter) peripheral — hardware accelerated, zero CPU overhead.
+Uses the ESP-IDF **PCNT** (Pulse Counter) peripheral — hardware accelerated, zero CPU overhead.
+Implemented as `EspPcnt` (HAL) + `FlowMeter` (driver).
 
-- Count rising edges on `FLOW_METER_PIN`
-- High limit: 32767, low limit: -1
-- Expose `flow_meter_reset()` to clear count at start of each cycle
-- `flow_meter_get_pulses()` → raw count
-- `flow_meter_get_ml()` → pulses × `ML_PER_PULSE`
-- `ML_PER_PULSE` must be calibrated empirically (pump into a measured container)
+- Counts rising edges on `FLOW_METER_PIN` (GPIO6)
+- PCNT high limit: 32767, low limit: -32768, accumulate-across-overflow enabled
+- `reset()` clears the hardware counter at pump start
+- `getPulses()` → raw rising-edge count
+- `getMilliliters()` → pulses × `ML_PER_PULSE`
+
+**Calibration — `ML_PER_PULSE`:**
+
+The sensor datasheet specifies **F = 23.6 × Q** where F is output frequency (Hz) and
+Q is flow rate (L/min). Solving for volume per pulse:
+
+```
+mL/pulse = 1000 / (60 × 23.6) ≈ 0.706 mL/pulse
+```
+
+This is flow-rate independent (Q cancels). The configured value is **0.706 mL/pulse**
+(datasheet-derived, ±3%). Verify empirically by pumping a known volume into a
+measuring container and dividing by the pulse count.
 
 **Use cases:**
 - Prime detection: no pulses after pump start → still drawing air
-- Volume metering: track ml dispensed per zone per session
+- Volume metering: track mL dispensed per zone per session
 - Anomaly detection:
   - Pulses with no solenoid open → leak
   - Solenoid open + pump running + no pulses → blockage or empty reservoir
@@ -837,7 +851,7 @@ Work in this order so each layer is testable before the next:
 
 1. **BTS7960 solenoids** — manually trigger one solenoid; verify pull-in/hold current on IS pin with multimeter; confirm hold duty keeps it open without overheating
 2. **Pump** — verify RPWM speed control and IS readback; confirm one-way valve holds column
-3. **Flow meter** — pump into a bucket, count pulses, calculate `ML_PER_PULSE`
+3. **Flow meter** — run water through sensor, verify pulse rate matches F=23.6×Q; confirm mL/pulse against a measured volume
 4. **Float sensor** — read ADC at full and empty reservoir; map to 0–100%
 5. **Renogy Modbus** — verify register reads match controller display via serial monitor
 6. **FSM dry run** — simulate a full watering cycle with `ESP_LOGI` logging and no water; verify state transitions and fault paths

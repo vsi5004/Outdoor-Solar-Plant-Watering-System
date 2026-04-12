@@ -7,6 +7,7 @@
 class EspPcnt : public IPulseCounter {
 public:
     explicit EspPcnt(int gpioNum);
+    ~EspPcnt();
 
     void    reset()          override;
     int32_t getCount() const override;

@@ -27,6 +27,14 @@ EspPcnt::EspPcnt(int gpioNum)
     ESP_ERROR_CHECK(pcnt_unit_start(unit_));
 }
 
+EspPcnt::~EspPcnt()
+{
+    pcnt_unit_stop(unit_);
+    pcnt_unit_disable(unit_);
+    pcnt_del_channel(chan_);
+    pcnt_del_unit(unit_);
+}
+
 void EspPcnt::reset()
 {
     ESP_ERROR_CHECK(pcnt_unit_clear_count(unit_));
