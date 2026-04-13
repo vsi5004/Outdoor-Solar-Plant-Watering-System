@@ -8,11 +8,15 @@ Usage (pipe):
 Usage (file redirect):
     python3 scripts/unity_to_junit.py < unity-output.txt > results.xml
 
+Usage (with wall-clock duration):
+    python3 scripts/unity_to_junit.py --duration-ms 1234 < unity-output.txt > results.xml
+
 Exit code:
     0 — at least one result parsed and XML written
     1 — no test results found in input (likely a build problem)
 """
 
+import argparse
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -40,9 +44,11 @@ def _parse(text):
     return tests
 
 
-def _to_junit(tests, suite_name='HostTests'):
+def _to_junit(tests, suite_name='HostTests', duration_ms=0):
     n_fail = sum(1 for t in tests if t['result'] == 'FAIL')
     n_skip = sum(1 for t in tests if t['result'] == 'IGNORE')
+
+    total_s = duration_ms / 1000.0
 
     suite = ET.Element('testsuite', {
         'name':     suite_name,
@@ -50,11 +56,13 @@ def _to_junit(tests, suite_name='HostTests'):
         'failures': str(n_fail),
         'skipped':  str(n_skip),
         'errors':   '0',
+        'time':     '{:.3f}'.format(total_s),
     })
 
     for t in tests:
         # classname: convert path separators to dots so reporters group by module
         classname = t['file'].replace('/', '.').replace('\\', '.')
+        # Per-test time is omitted — Unity does not emit it.
         case = ET.SubElement(suite, 'testcase', {
             'name':      t['name'],
             'classname': classname,
@@ -73,6 +81,12 @@ def _to_junit(tests, suite_name='HostTests'):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--duration-ms', type=int, default=0,
+                        help='Wall-clock duration of the test run in milliseconds')
+    args = parser.parse_args()
+
     text = sys.stdin.read()
     tests = _parse(text)
 
@@ -80,7 +94,7 @@ def main():
         print('unity_to_junit.py: no test results found in input', file=sys.stderr)
         return 1
 
-    tree = _to_junit(tests)
+    tree = _to_junit(tests, duration_ms=args.duration_ms)
     if hasattr(ET, 'indent'):   # Python >= 3.9
         ET.indent(tree, space='  ')
     tree.write(sys.stdout, encoding='unicode', xml_declaration=True)

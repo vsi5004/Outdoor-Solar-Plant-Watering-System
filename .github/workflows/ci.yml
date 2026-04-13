@@ -30,14 +30,21 @@ jobs:
 
       # Tee preserves stdout for the report while pipefail propagates a non-zero
       # exit code from the test binary so the step still fails on test failures.
+      # Wall-clock time is captured so the JUnit report shows accurate duration.
       - name: Run host tests
         working-directory: test/host
         shell: bash -eo pipefail {0}
-        run: ./build/test_host.elf | tee unity-output.txt
+        run: |
+          T0=$(date +%s%3N)
+          ./build/test_host.elf | tee unity-output.txt
+          echo $(($(date +%s%3N) - T0)) > /tmp/test-duration-ms.txt
 
       - name: Convert Unity output to JUnit XML
         if: always()
-        run: python3 scripts/unity_to_junit.py < test/host/unity-output.txt > test-results.xml
+        run: |
+          DURATION_MS=$(cat /tmp/test-duration-ms.txt 2>/dev/null || echo 0)
+          python3 scripts/unity_to_junit.py --duration-ms "$DURATION_MS" \
+            < test/host/unity-output.txt > test-results.xml
 
       # dorny/test-reporter runs git inside the espressif container where the
       # workspace is owned by a different UID — mark it safe first.
