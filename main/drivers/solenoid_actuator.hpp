@@ -17,8 +17,9 @@ class SolenoidActuator {
 public:
     explicit SolenoidActuator(
         IPwm&    pwm,
-        uint32_t pullInMs    = config::solenoid::PULL_IN_MS,
-        uint8_t  holdDutyPct = config::solenoid::HOLD_DUTY_PCT
+        uint32_t pullInMs       = config::solenoid::PULL_IN_MS,
+        uint8_t  holdDutyPct    = config::solenoid::HOLD_DUTY_PCT,
+        uint8_t  pullInDutyPct  = config::solenoid::PULL_IN_DUTY_PCT
     );
 
     // Pull in then hold. Blocks for pullInMs before returning.
@@ -33,5 +34,6 @@ private:
     IPwm&    pwm_;
     uint32_t pullInMs_;
     uint8_t  holdDutyPct_;
+    uint8_t  pullInDutyPct_;
     bool     open_ = false;
 };

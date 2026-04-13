@@ -37,7 +37,7 @@ static void test_float_sensor_calibration_range_valid(void)
 
 static void test_ml_per_pulse_positive(void)
 {
-    TEST_ASSERT_GREATER_THAN(0.0f, config::flow::ML_PER_PULSE);
+    TEST_ASSERT_GREATER_THAN_FLOAT(0.0f, config::flow::ML_PER_PULSE);
 }
 
 // ── ZoneId ───────────────────────────────────────────────────────────────────
@@ -74,9 +74,9 @@ static void test_fault_code_values_stable(void)
     TEST_ASSERT_EQUAL(1, static_cast<uint8_t>(FaultCode::LowBattery));
     TEST_ASSERT_EQUAL(2, static_cast<uint8_t>(FaultCode::LowWater));
     TEST_ASSERT_EQUAL(3, static_cast<uint8_t>(FaultCode::PrimeTimeout));
-    TEST_ASSERT_EQUAL(4, static_cast<uint8_t>(FaultCode::DryRun));
     TEST_ASSERT_EQUAL(5, static_cast<uint8_t>(FaultCode::MaxDuration));
     TEST_ASSERT_EQUAL(6, static_cast<uint8_t>(FaultCode::InvalidRequest));
+    TEST_ASSERT_EQUAL(7, static_cast<uint8_t>(FaultCode::LoadEnableFailed));
 }
 
 static void test_zone_status_values_stable(void)

@@ -4,28 +4,26 @@
 
 void LedcPwm::initTimer()
 {
-    ledc_timer_config_t cfg = {
-        .speed_mode      = kMode,
-        .duty_resolution = static_cast<ledc_timer_bit_t>(config::ledc::RESOLUTION_BITS),
-        .timer_num       = kTimer,
-        .freq_hz         = config::ledc::FREQUENCY_HZ,
-        .clk_cfg         = LEDC_AUTO_CLK,
-    };
+    ledc_timer_config_t cfg = {};
+    cfg.speed_mode      = kMode;
+    cfg.duty_resolution = static_cast<ledc_timer_bit_t>(config::ledc::RESOLUTION_BITS);
+    cfg.timer_num       = kTimer;
+    cfg.freq_hz         = config::ledc::FREQUENCY_HZ;
+    cfg.clk_cfg         = LEDC_AUTO_CLK;
     ESP_ERROR_CHECK(ledc_timer_config(&cfg));
 }
 
 LedcPwm::LedcPwm(int gpioNum, ledc_channel_t channel)
     : channel_(channel)
 {
-    ledc_channel_config_t cfg = {
-        .gpio_num   = gpioNum,
-        .speed_mode = kMode,
-        .channel    = channel_,
-        .intr_type  = LEDC_INTR_DISABLE,
-        .timer_sel  = kTimer,
-        .duty       = 0,
-        .hpoint     = 0,
-    };
+    ledc_channel_config_t cfg = {};
+    cfg.gpio_num   = gpioNum;
+    cfg.speed_mode = kMode;
+    cfg.channel    = channel_;
+    cfg.intr_type  = LEDC_INTR_DISABLE;
+    cfg.timer_sel  = kTimer;
+    cfg.duty       = 0;
+    cfg.hpoint     = 0;
     ESP_ERROR_CHECK(ledc_channel_config(&cfg));
 }
 

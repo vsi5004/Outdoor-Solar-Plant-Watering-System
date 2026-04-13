@@ -47,7 +47,7 @@ bool WateringFsm::request(const WateringRequest& req, uint32_t nowMs)
 
     flow_.reset();
     zones_.open(req_.zone);
-    pump_.setSpeed(100u);
+    pump_.setSpeed(config::pump::DUTY_PCT);
     phaseStartMs_ = nowMs;
     state_        = State::Priming;
     return true;
@@ -77,10 +77,6 @@ void WateringFsm::tick(uint32_t nowMs)
             deliveredMl_ = static_cast<uint32_t>(flow_.getMilliliters() + 0.5f);
             stopAll();
             state_ = State::Idle;
-            break;
-        }
-        if (pump_.readCurrentMa() < config::pump::DRY_RUN_MA) {
-            enterFault(FaultCode::DryRun);
             break;
         }
         if (renogy_.getData().batterySoc <= config::safety::MIN_BATTERY_SOC_PCT) {

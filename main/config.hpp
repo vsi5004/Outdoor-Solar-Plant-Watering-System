@@ -24,7 +24,8 @@ namespace config
         constexpr int RENOGY_UART = 1; // UART_NUM_1
 
         // PCNT hardware pulse counter — flow meter square-wave output
-        constexpr int FLOW_METER = 6; // GPIO6  (ADC1_CH6 — PCNT takes priority)
+        // GPIO15 used (external JTAG MTDI — safe as GPIO when no JTAG probe attached).
+        constexpr int FLOW_METER = 15; // GPIO15
 
         // ADC — float (water level) sensor
         constexpr int FLOAT_SENSOR = 0; // GPIO0  ADC1_CH0
@@ -33,21 +34,17 @@ namespace config
         // Drive HIGH to enable, LOW for emergency stop of all outputs.
         constexpr int DRV_MASTER_EN = 21; // GPIO21
 
-        // BTS7960 #1 — left half: pump | right half: solenoid 5
-        // LPWM is hardwired to GND on the board (one-way valve; no reverse needed).
+        // BTS7960 board #1 — left half: pump (LPWM hardwired GND) | right half: solenoid 5
         constexpr int PUMP_RPWM = 7;  // GPIO7   LEDC_CHANNEL_0
-        constexpr int DRV1_IS = 1;    // GPIO1   ADC1_CH1 — shared: pump + sol5
-        constexpr int SOL5_RPWM = 10; // GPIO10  LEDC_CHANNEL_1
+        constexpr int SOL5_RPWM = 6;  // GPIO6   LEDC_CHANNEL_1
 
-        // BTS7960 #2 — left half: solenoid 1 | right half: solenoid 2
-        constexpr int SOL1_LPWM = 11; // GPIO11  LEDC_CHANNEL_2
-        constexpr int SOL2_RPWM = 18; // GPIO18  LEDC_CHANNEL_3
-        constexpr int DRV2_IS = 2;    // GPIO2   ADC1_CH2 — shared: sol1 + sol2
+        // BTS7960 board #2 — left half: solenoid 1 | right half: solenoid 2
+        constexpr int SOL1_LPWM = 11;  // GPIO11  LEDC_CHANNEL_2
+        constexpr int SOL2_RPWM = 18;  // GPIO18  LEDC_CHANNEL_3
 
-        // BTS7960 #3 — left half: solenoid 3 | right half: solenoid 4
-        constexpr int SOL3_LPWM = 19; // GPIO19  LEDC_CHANNEL_4
-        constexpr int SOL4_RPWM = 20; // GPIO20  LEDC_CHANNEL_5
-        constexpr int DRV3_IS = 3;    // GPIO3   ADC1_CH3 — shared: sol3 + sol4
+        // BTS7960 board #3 — left half: solenoid 3 | right half: solenoid 4
+        constexpr int SOL3_LPWM = 19;  // GPIO19  LEDC_CHANNEL_4
+        constexpr int SOL4_RPWM = 20;  // GPIO20  LEDC_CHANNEL_5
 
     } // namespace pins
 
@@ -61,7 +58,7 @@ namespace config
         constexpr int SOL3_CH = 4; // LEDC_CHANNEL_4 — solenoid 3 LPWM
         constexpr int SOL4_CH = 5; // LEDC_CHANNEL_5 — solenoid 4 RPWM
 
-        constexpr uint32_t FREQUENCY_HZ = 1'000;
+        constexpr uint32_t FREQUENCY_HZ = 25'000; // above audible range; coil whine inaudible
         constexpr uint32_t RESOLUTION_BITS = 10; // duty range: 0–1023
     } // namespace ledc
 
@@ -69,9 +66,6 @@ namespace config
     namespace adc
     {
         constexpr int FLOAT_SENSOR_CH = 0; // ADC1_CH0 — float sensor
-        constexpr int DRV1_IS_CH = 1;      // ADC1_CH1 — BTS7960 #1 IS pin
-        constexpr int DRV2_IS_CH = 2;      // ADC1_CH2 — BTS7960 #2 IS pin
-        constexpr int DRV3_IS_CH = 3;      // ADC1_CH3 — BTS7960 #3 IS pin
 
         // Number of conversions averaged per readMillivolts() call.
         // Higher values reduce noise; each extra sample adds ~100 µs.
@@ -90,31 +84,25 @@ namespace config
     // ── Solenoid PWM behavior ─────────────────────────────────────────────────────
     namespace solenoid
     {
-        // Full-duty pull-in phase duration before dropping to hold duty.
-        constexpr uint32_t PULL_IN_MS = 120;
+        // Pull-in phase: full burst to seat the plunger.
+        constexpr uint8_t  PULL_IN_DUTY_PCT = 85;  // empirically determined
+        constexpr uint32_t PULL_IN_MS       = 100; // empirically determined
 
-        // Hold duty — enough to keep the solenoid open, low enough to limit heat.
-        // Typical range: 30–40%.
-        constexpr uint8_t HOLD_DUTY_PCT = 38;
-
-        // Expected zone 5 solenoid hold current (mA).
-        // Used to correct BTS7960 #1 IS reading when pump and solenoid 5 run
-        // simultaneously (they share the same IS pin).
-        // CALIBRATE: measure with a clamp meter during zone 5 hold phase.
-        constexpr float HOLD_CURRENT_MA = 180.0f; // [CALIBRATE]
+        // Hold duty — enough to keep the plunger seated, low enough to limit heat.
+        constexpr uint8_t HOLD_DUTY_PCT = 20; // empirically determined
     } // namespace solenoid
 
     // ── Pump ──────────────────────────────────────────────────────────────────────
     namespace pump
     {
+        // Duty % applied during dispensing — empirically determined.
+        constexpr uint8_t DUTY_PCT = 50;
+
         // Maximum time to wait for flow pulses before declaring a prime fault.
         constexpr uint32_t PRIME_TIMEOUT_MS = 15'000;
 
         // Minimum pulse count before the pump is considered primed.
         constexpr uint32_t PRIME_PULSE_COUNT = 5;
-
-        // IS current below this level while running = dry-run fault.
-        constexpr float DRY_RUN_MA = 200.0f;
 
         // Hard cap on watering duration regardless of HA command.
         constexpr uint32_t MAX_DISPENSE_MS = 30u * 60u * 1'000u; // 30 minutes

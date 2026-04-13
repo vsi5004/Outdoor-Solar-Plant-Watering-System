@@ -15,7 +15,6 @@ idf_component_register(
         "test_watering_fsm.cpp"
 
         # Driver sources under test (no hardware calls — injected via mocks)
-        "../../../main/drivers/bts7960_chip.cpp"
         "../../../main/drivers/solenoid_actuator.cpp"
         "../../../main/drivers/pump_actuator.cpp"
         "../../../main/drivers/flow_meter.cpp"

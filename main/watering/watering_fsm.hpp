@@ -14,7 +14,7 @@
 // States:
 //   Idle     — waiting for a request
 //   Priming  — pump running, waiting for flow pulses to confirm prime
-//   Watering — dispensing; monitors time, battery, and pump current
+//   Watering — dispensing; monitors time and battery
 //   Fault    — all outputs off; call clearFault() to return to Idle
 //
 // Callers pass the current time (ms) explicitly to request() and tick().

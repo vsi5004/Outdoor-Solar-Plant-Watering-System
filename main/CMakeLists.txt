@@ -10,7 +10,6 @@ idf_component_register(
         "hal/esp_gpio.cpp"
 
         # Drivers
-        "drivers/bts7960_chip.cpp"
         "drivers/solenoid_actuator.cpp"
         "drivers/pump_actuator.cpp"
         "drivers/flow_meter.cpp"

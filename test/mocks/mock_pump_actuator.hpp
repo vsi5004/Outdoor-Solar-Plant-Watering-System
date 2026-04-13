@@ -3,10 +3,9 @@
 
 class MockPumpActuator : public IPumpActuator {
 public:
-    uint8_t lastSpeed_    = 0;
+    uint8_t lastSpeed_     = 0;
     int     setSpeedCalls_ = 0;
-    int     stopCalls_    = 0;
-    float   currentMa_   = 800.0f; // default: healthy running current
+    int     stopCalls_     = 0;
 
     void setSpeed(uint8_t pct) override
     {
@@ -17,9 +16,5 @@ public:
     {
         lastSpeed_ = 0;
         stopCalls_++;
-    }
-    float readCurrentMa() const override
-    {
-        return currentMa_;
     }
 };

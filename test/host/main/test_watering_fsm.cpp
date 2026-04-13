@@ -127,7 +127,7 @@ static void test_valid_request_starts_pump(void)
 {
     Fixture f;
     f.sendRequest();
-    TEST_ASSERT_EQUAL(100, f.pump.lastSpeed_);
+    TEST_ASSERT_EQUAL(config::pump::DUTY_PCT, f.pump.lastSpeed_);
 }
 
 static void test_valid_request_resets_flow_meter(void)
@@ -219,27 +219,6 @@ static void test_watering_records_delivered_ml(void)
 }
 
 // ── Watering fault paths ──────────────────────────────────────────────────────
-
-static void test_dry_run_causes_fault(void)
-{
-    Fixture f;
-    f.sendRequest();
-    f.simulatePrime();
-    f.pump.currentMa_ = config::pump::DRY_RUN_MA - 1.0f;
-    f.fsm.tick(f.now);
-    TEST_ASSERT_EQUAL(FaultCode::DryRun, f.fsm.getLastFault());
-}
-
-static void test_dry_run_stops_pump_and_closes_zones(void)
-{
-    Fixture f;
-    f.sendRequest();
-    f.simulatePrime();
-    f.pump.currentMa_ = config::pump::DRY_RUN_MA - 1.0f;
-    f.fsm.tick(f.now);
-    TEST_ASSERT_EQUAL(0,     f.pump.lastSpeed_);
-    TEST_ASSERT_FALSE(f.zones.isOpen(ZoneId::Zone1));
-}
 
 static void test_max_duration_causes_fault(void)
 {
@@ -410,8 +389,6 @@ void run_watering_fsm_tests(void)
     RUN_TEST(test_watering_stops_after_duration);
     RUN_TEST(test_watering_closes_zone_and_stops_pump_on_completion);
     RUN_TEST(test_watering_records_delivered_ml);
-    RUN_TEST(test_dry_run_causes_fault);
-    RUN_TEST(test_dry_run_stops_pump_and_closes_zones);
     RUN_TEST(test_max_duration_causes_fault);
     RUN_TEST(test_battery_drop_during_watering_causes_fault);
     RUN_TEST(test_cancel_during_priming_returns_to_idle);

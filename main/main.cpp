@@ -15,7 +15,6 @@
 #include "hal/esp_gpio.hpp"
 
 // Drivers
-#include "drivers/bts7960_chip.hpp"
 #include "drivers/solenoid_actuator.hpp"
 #include "drivers/pump_actuator.hpp"
 #include "drivers/flow_meter.hpp"
@@ -63,17 +62,8 @@ static SolenoidActuator s_sol3(s_sol3Pwm);
 static SolenoidActuator s_sol4(s_sol4Pwm);
 static SolenoidActuator s_sol5(s_sol5Pwm);
 
-// BTS7960 current-sense chips (one per board)
-// ADC channels are created after the unit is initialised in app_main.
-// We use pointers here and assign once the unit handle is available.
-static EspAdcChannel*  s_is1AdcCh  = nullptr; // ADC1_CH1 — drv1 (pump + sol5)
-static EspAdcChannel*  s_is2AdcCh  = nullptr; // ADC1_CH2 — drv2 (sol1 + sol2)
-static EspAdcChannel*  s_is3AdcCh  = nullptr; // ADC1_CH3 — drv3 (sol3 + sol4)
+// ADC channels — created after the unit is initialised in app_main.
 static EspAdcChannel*  s_floatAdcCh = nullptr; // ADC1_CH0 — float sensor
-
-static Bts7960Chip*    s_drv1 = nullptr;
-static Bts7960Chip*    s_drv2 = nullptr;
-static Bts7960Chip*    s_drv3 = nullptr;
 
 static PumpActuator*   s_pump = nullptr;
 static FloatSensor*    s_tank = nullptr;
@@ -223,23 +213,12 @@ extern "C" void app_main(void)
                                                                          ADC_ATTEN_DB_12);
 
     EspAdcChannel::configChannel(adc1, ADC_CHANNEL_0);  // float sensor
-    EspAdcChannel::configChannel(adc1, ADC_CHANNEL_1);  // BTS7960 #1 IS
-    EspAdcChannel::configChannel(adc1, ADC_CHANNEL_2);  // BTS7960 #2 IS
-    EspAdcChannel::configChannel(adc1, ADC_CHANNEL_3);  // BTS7960 #3 IS
 
     // ADC channel objects (heap-allocated; live forever).
     s_floatAdcCh = new EspAdcChannel(adc1, ADC_CHANNEL_0, cali1);
-    s_is1AdcCh   = new EspAdcChannel(adc1, ADC_CHANNEL_1, cali1);
-    s_is2AdcCh   = new EspAdcChannel(adc1, ADC_CHANNEL_2, cali1);
-    s_is3AdcCh   = new EspAdcChannel(adc1, ADC_CHANNEL_3, cali1);
-
-    // BTS7960 chips.
-    s_drv1 = new Bts7960Chip(*s_is1AdcCh);
-    s_drv2 = new Bts7960Chip(*s_is2AdcCh);
-    s_drv3 = new Bts7960Chip(*s_is3AdcCh);
 
     // Pump and tank sensor.
-    s_pump = new PumpActuator(s_pumpPwm, *s_drv1, s_sol5);
+    s_pump = new PumpActuator(s_pumpPwm);
     s_tank = new FloatSensor(*s_floatAdcCh);
 
     // Zone manager and FSM.
