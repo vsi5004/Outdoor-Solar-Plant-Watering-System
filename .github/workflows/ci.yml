@@ -39,6 +39,12 @@ jobs:
         if: always()
         run: python3 scripts/unity_to_junit.py < test/host/unity-output.txt > test-results.xml
 
+      # dorny/test-reporter runs git inside the espressif container where the
+      # workspace is owned by a different UID — mark it safe first.
+      - name: Fix git safe directory
+        if: always()
+        run: git config --global --add safe.directory '*'
+
       # Publishes a Check Run visible on the commit and in any open PR.
       # fail-on-error: false prevents a permissions issue on fork PRs from
       # masking the real test failure reported by the Run step above.
