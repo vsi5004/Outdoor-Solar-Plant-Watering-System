@@ -27,7 +27,14 @@ bool WateringFsm::request(const WateringRequest& req, uint32_t nowMs)
         enterFault(FaultCode::InvalidRequest);
         return false;
     }
-    if (renogy_.getData().batterySoc <= config::safety::MIN_BATTERY_SOC_PCT) {
+    const RenogyData renogySnap = renogy_.getData();
+    if (!renogySnap.valid ||
+        (renogySnap.lastUpdateMs > 0u &&
+         (nowMs - renogySnap.lastUpdateMs) > config::renogy::STALE_THRESHOLD_MS)) {
+        enterFault(FaultCode::StaleData);
+        return false;
+    }
+    if (renogySnap.batterySoc <= config::safety::MIN_BATTERY_SOC_PCT) {
         enterFault(FaultCode::LowBattery);
         return false;
     }
@@ -79,9 +86,17 @@ void WateringFsm::tick(uint32_t nowMs)
             state_ = State::Idle;
             break;
         }
-        if (renogy_.getData().batterySoc <= config::safety::MIN_BATTERY_SOC_PCT) {
-            enterFault(FaultCode::LowBattery);
-            break;
+        {
+            const RenogyData d = renogy_.getData();
+            if (d.lastUpdateMs > 0u &&
+                (nowMs - d.lastUpdateMs) > config::renogy::STALE_THRESHOLD_MS) {
+                enterFault(FaultCode::StaleData);
+                break;
+            }
+            if (d.batterySoc <= config::safety::MIN_BATTERY_SOC_PCT) {
+                enterFault(FaultCode::LowBattery);
+                break;
+            }
         }
         break;
 

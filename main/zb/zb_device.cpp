@@ -190,8 +190,8 @@ void ZbDevice::buildBatteryEp(esp_zb_ep_list_t* ep_list)
 
 void ZbDevice::buildSolarDataEps(esp_zb_ep_list_t* ep_list)
 {
-    // Three Analog Input endpoints: min battery voltage, daily generation, daily consumption.
-    const uint8_t eps[3] = { kMinBattVoltEp, kDailyGenEp, kDailyConEp };
+    // Three Analog Input endpoints: max charging power today, daily generation, daily consumption.
+    const uint8_t eps[3] = { kMaxChargePowerEp, kDailyGenEp, kDailyConEp };
 
     for (uint8_t ep : eps) {
         esp_zb_analog_input_cluster_cfg_t ai_cfg = {
@@ -217,7 +217,7 @@ void ZbDevice::buildSolarDataEps(esp_zb_ep_list_t* ep_list)
 
 void ZbDevice::buildFaultEp(esp_zb_ep_list_t* ep_list)
 {
-    // Multistate Input — 8 states matching FaultCode enum (0=None … 7=LoadEnableFailed)
+    // Multistate Input — 8 states matching FaultCode enum (0=None … 7=StaleData)
     esp_zb_multistate_input_cluster_cfg_t ms_cfg = {
         .number_of_states = 8,
         .out_of_service   = 0,

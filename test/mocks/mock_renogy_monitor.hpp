@@ -10,7 +10,8 @@ public:
 
     MockRenogyMonitor()
     {
-        data_.batterySoc = 80; // default: healthy battery
+        data_.valid      = true; // simulate a driver that has polled at least once
+        data_.batterySoc = 80;   // default: healthy battery
     }
 
     RenogyData getData() const override

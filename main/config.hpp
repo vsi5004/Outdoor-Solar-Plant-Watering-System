@@ -79,6 +79,9 @@ namespace config
         constexpr uint8_t MODBUS_ADDR = 0x01;
         constexpr uint32_t POLL_INTERVAL_MS = 30'000;
         constexpr uint32_t RESPONSE_TIMEOUT_MS = 500;
+        // Data older than this triggers FaultCode::StaleData. 3× poll interval
+        // gives two missed polls before a watering cycle is blocked.
+        constexpr uint32_t STALE_THRESHOLD_MS = 3u * POLL_INTERVAL_MS; // 90 s
     } // namespace renogy
 
     // ── Solenoid PWM behavior ─────────────────────────────────────────────────────

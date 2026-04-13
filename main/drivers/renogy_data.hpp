@@ -7,6 +7,8 @@
 // Written exclusively by RenogyDriver::poll() under its mutex.
 // Read by any task via RenogyDriver::getData() which returns a copy.
 struct RenogyData {
+    bool     valid = false;            // true after the first successful poll()
+
     // ── Real-time telemetry ───────────────────────────────────────────────────
     uint16_t batterySoc;              // %      (reg 0x0100, raw value = % directly, 0–100)
     float    batteryVoltage;          // V      (reg 0x0101 × 0.1)

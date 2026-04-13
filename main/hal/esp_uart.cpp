@@ -1,5 +1,8 @@
 #include "hal/esp_uart.hpp"
 #include "esp_err.h"
+#include "esp_log.h"
+
+static const char* TAG = "EspUart";
 
 EspUart::EspUart(uart_port_t port, int txPin, int rxPin, uint32_t baudRate)
     : port_(port)
@@ -20,7 +23,11 @@ EspUart::EspUart(uart_port_t port, int txPin, int rxPin, uint32_t baudRate)
 
 void EspUart::write(const uint8_t* data, size_t len)
 {
-    uart_write_bytes(port_, data, len);
+    const int written = uart_write_bytes(port_, data, len);
+    if (written < 0 || static_cast<size_t>(written) != len) {
+        ESP_LOGE(TAG, "uart_write_bytes: requested %u wrote %d",
+                 static_cast<unsigned>(len), written);
+    }
 }
 
 size_t EspUart::read(uint8_t* buf, size_t len, uint32_t timeoutMs)

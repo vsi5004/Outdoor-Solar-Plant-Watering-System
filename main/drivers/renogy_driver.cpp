@@ -48,6 +48,7 @@ bool RenogyDriver::poll()
     const float   tempMag = static_cast<float>(tempHi & 0x7F);
 
     RenogyData d{};
+    d.valid = true;
     // Real-time
     d.batterySoc     = r[0];                                                    // 0x0100
     d.batteryVoltage = static_cast<float>(r[1]) * 0.1f;                        // 0x0101

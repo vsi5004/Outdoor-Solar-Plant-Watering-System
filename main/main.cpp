@@ -2,7 +2,7 @@
 #include <cstdint>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_zigbee_core.h"
@@ -41,8 +41,8 @@ static void zbTask(void* arg);
 
 // ── Object graph (static storage — survives after app_main returns) ───────────
 
-// Mutex shared between the watering task and the Zigbee command handler.
-static SemaphoreHandle_t s_fsmMutex;
+// Queue for Zigbee → watering-task command handoff (depth 4, ZbWateringCmd items).
+static QueueHandle_t s_cmdQueue;
 
 // GPIO
 static EspGpio s_drvMasterEn(config::pins::DRV_MASTER_EN);
@@ -141,14 +141,28 @@ static void wateringTask(void* /*arg*/)
 
         const uint32_t nowMs = pdTICKS_TO_MS(xTaskGetTickCount());
 
-        xSemaphoreTake(s_fsmMutex, portMAX_DELAY);
+        // Drain commands posted by the Zigbee callback.  Processing here keeps
+        // the Zigbee stack task free regardless of how long FSM or I/O takes.
+        ZbWateringCmd cmd;
+        while (xQueueReceive(s_cmdQueue, &cmd, 0) == pdTRUE) {
+            if (cmd.type == ZbWateringCmd::Type::Request) {
+                const WateringRequest req{ cmd.zone, cmd.durationSec, WaterSource::HaManual };
+                if (!s_fsm->request(req, nowMs)) {
+                    ESP_LOGW(TAG, "Zone %u request rejected — fault %u",
+                             static_cast<unsigned>(cmd.zone),
+                             static_cast<unsigned>(s_fsm->getLastFault()));
+                }
+            } else {
+                s_fsm->cancel();
+            }
+        }
+
         s_fsm->tick(nowMs);
-        xSemaphoreGive(s_fsmMutex);
 
         // Report zone status changes.
         for (uint8_t i = 0; i < ZONE_COUNT; ++i) {
-            const auto    zoneId = static_cast<ZoneId>(i + 1u);
-            const auto    status = s_fsm->getZoneStatus(zoneId);
+            const auto zoneId = static_cast<ZoneId>(i + 1u);
+            const auto status = s_fsm->getZoneStatus(zoneId);
             if (status != lastStatus[i]) {
                 lastStatus[i] = status;
                 ZbDevice::reportZoneStatus(zoneId, status);
@@ -166,6 +180,12 @@ static void wateringTask(void* /*arg*/)
 
 static void renogyTask(void* /*arg*/)
 {
+    // Poll immediately so fresh battery/solar data is available before the
+    // first watering request arrives.
+    if (!s_renogy.poll()) {
+        ESP_LOGW(TAG, "Renogy initial poll failed");
+    }
+
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(config::renogy::POLL_INTERVAL_MS));
 
@@ -215,7 +235,7 @@ extern "C" void app_main(void)
     EspAdcChannel::configChannel(adc1, ADC_CHANNEL_0);  // float sensor
 
     // ADC channel objects (heap-allocated; live forever).
-    s_floatAdcCh = new EspAdcChannel(adc1, ADC_CHANNEL_0, cali1);
+    s_floatAdcCh = new EspAdcChannel(adc1, ADC_CHANNEL_0, cali1, config::adc::OVERSAMPLE_COUNT);
 
     // Pump and tank sensor.
     s_pump = new PumpActuator(s_pumpPwm);
@@ -231,10 +251,10 @@ extern "C" void app_main(void)
 
     // ── Zigbee handler wiring ─────────────────────────────────────────────────
 
-    s_fsmMutex = xSemaphoreCreateMutex();
-    configASSERT(s_fsmMutex);
+    s_cmdQueue = xQueueCreate(4, sizeof(ZbWateringCmd));
+    configASSERT(s_cmdQueue);
 
-    ZbHandlers::setFsm(s_fsm, s_fsmMutex);
+    ZbHandlers::init(s_cmdQueue);
 
     // ── Tasks ─────────────────────────────────────────────────────────────────
 

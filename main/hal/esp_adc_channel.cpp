@@ -48,6 +48,7 @@ adc_oneshot_unit_handle_t EspAdcChannel::createUnit()
 adc_cali_handle_t EspAdcChannel::createCali(adc_unit_t unit, adc_atten_t atten)
 {
     adc_cali_handle_t handle = nullptr;
+    esp_err_t         err    = ESP_FAIL;
 
 #if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
     adc_cali_curve_fitting_config_t cfg = {
@@ -56,7 +57,7 @@ adc_cali_handle_t EspAdcChannel::createCali(adc_unit_t unit, adc_atten_t atten)
         .atten    = atten,
         .bitwidth = ADC_BITWIDTH_DEFAULT,
     };
-    esp_err_t err = adc_cali_create_scheme_curve_fitting(&cfg, &handle);
+    err = adc_cali_create_scheme_curve_fitting(&cfg, &handle);
     if (err == ESP_OK) {
         return handle;
     }
@@ -70,7 +71,7 @@ adc_cali_handle_t EspAdcChannel::createCali(adc_unit_t unit, adc_atten_t atten)
         .atten    = atten,
         .bitwidth = ADC_BITWIDTH_DEFAULT,
     };
-    esp_err_t err = adc_cali_create_scheme_line_fitting(&line_cfg, &handle);
+    err = adc_cali_create_scheme_line_fitting(&line_cfg, &handle);
     if (err == ESP_OK) {
         return handle;
     }

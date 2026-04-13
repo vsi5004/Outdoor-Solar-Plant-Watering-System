@@ -60,7 +60,8 @@ All hardware mappings defined in one place. Based on the ESP32-C6-DevKitC-1 pino
 #define RENOGY_MODBUS_ADDR  0x01
 
 // Flow meter (PCNT hardware counter)
-#define FLOW_METER_PIN      GPIO_NUM_6   // ADC1_CH6 — PCNT takes priority
+// GPIO15 used (external JTAG MTDI — safe as GPIO when no JTAG probe attached).
+#define FLOW_METER_PIN      GPIO_NUM_15  // PCNT input
 
 // Float sensor (ADC)
 #define FLOAT_SENSOR_PIN    GPIO_NUM_0   // ADC1_CH0
@@ -72,19 +73,16 @@ All hardware mappings defined in one place. Based on the ESP32-C6-DevKitC-1 pino
 // BTS7960 #1 — Left half: Pump | Right half: Solenoid 5
 #define PUMP_LPWM_PIN       -1           // Hardwired to GND on board (no reverse)
 #define PUMP_RPWM_PIN       GPIO_NUM_7   // Pump speed control PWM
-#define DRV1_IS_PIN         GPIO_NUM_1   // ADC1_CH1 — shared: pump + solenoid 5
 #define SOL5_LPWM_PIN       -1           // Unused half — solenoid on right half only
-#define SOL5_RPWM_PIN       GPIO_NUM_10  // Solenoid 5 PWM
+#define SOL5_RPWM_PIN       GPIO_NUM_6   // Solenoid 5 PWM
 
 // BTS7960 #2 — Left half: Solenoid 1 | Right half: Solenoid 2
 #define SOL1_LPWM_PIN       GPIO_NUM_11  // Solenoid 1 PWM
 #define SOL2_RPWM_PIN       GPIO_NUM_18  // Solenoid 2 PWM
-#define DRV2_IS_PIN         GPIO_NUM_2   // ADC1_CH2
 
 // BTS7960 #3 — Left half: Solenoid 3 | Right half: Solenoid 4
 #define SOL3_LPWM_PIN       GPIO_NUM_19  // Solenoid 3 PWM
 #define SOL4_RPWM_PIN       GPIO_NUM_20  // Solenoid 4 PWM
-#define DRV3_IS_PIN         GPIO_NUM_3   // ADC1_CH3
 ```
 
 **GPIO summary:**
@@ -92,22 +90,18 @@ All hardware mappings defined in one place. Based on the ESP32-C6-DevKitC-1 pino
 | GPIO | Function | Notes |
 |---|---|---|
 | GPIO0 | Float sensor ADC | ADC1_CH0 |
-| GPIO1 | DRV1 IS ADC | ADC1_CH1 — pump + sol5 combined |
-| GPIO2 | DRV2 IS ADC | ADC1_CH2 — sol1 + sol2 |
-| GPIO3 | DRV3 IS ADC | ADC1_CH3 — sol3 + sol4 |
 | GPIO4 | UART1 TX → Renogy | LP_UART_TXD |
 | GPIO5 | UART1 RX ← Renogy | LP_UART_RXD |
-| GPIO6 | Flow meter PCNT | ADC1_CH6 — PCNT takes priority |
+| GPIO6 | DRV1 RPWM — Sol5 | PWM |
 | GPIO7 | DRV1 RPWM — Pump | PWM |
-| GPIO10 | DRV1 RPWM — Sol5 | PWM |
 | GPIO11 | DRV2 LPWM — Sol1 | PWM |
+| GPIO15 | Flow meter PCNT | JTAG MTDI — safe as GPIO when no probe attached |
 | GPIO18 | DRV2 RPWM — Sol2 | PWM |
 | GPIO19 | DRV3 LPWM — Sol3 | PWM |
 | GPIO20 | DRV3 RPWM — Sol4 | PWM |
 | GPIO21 | MASTER_EN all boards | All 6 EN pins wired to this |
 | GPIO16 | U0TXD debug serial | Reserved — do not use |
 | GPIO17 | U0RXD debug serial | Reserved — do not use |
-| GPIO15 | JTAG | Reserved during development |
 | GPIO8 | RGB LED | Reserved — boot strapping pin |
 | GPIO9 | — | Reserved — boot strapping pin |
 | GPIO12 | USB D- | Reserved |

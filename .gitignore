@@ -30,3 +30,7 @@ Thumbs.db
 # IDE
 *.swp
 *.swo
+
+# CI test artifacts
+unity-output.txt
+test-results.xml
