@@ -1,0 +1,11 @@
+# Partition table for plant-waterer (ESP32-C6, 2 MB flash)
+#
+# zb_storage and zb_fct are required by the Zigbee stack (esp-zboss).
+# Both must use subtype 'fat'; the stack locates them by name + subtype.
+#
+# Name,       Type, SubType, Offset,   Size
+nvs,          data, nvs,     0x9000,   0x6000,
+phy_init,     data, phy,     0xf000,   0x1000,
+factory,      app,  factory, 0x10000,  0xf0000,
+zb_storage,   data, fat,     0x100000, 0x4000,
+zb_fct,       data, fat,     0x104000, 0x400,

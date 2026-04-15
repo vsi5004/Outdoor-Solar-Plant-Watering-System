@@ -9,6 +9,10 @@ dependencies:
   espressif/esp-zboss-lib:
     version: ">=1.5.0"
 
+  ## WS2812 RGB LED driver (RMT-based); used for the onboard status LED.
+  espressif/led_strip:
+    version: ">=3.0.0"
+
   ## Enforce a minimum IDF version so the build fails fast on an
   ## incompatible toolchain rather than with a confusing linker error.
   idf:

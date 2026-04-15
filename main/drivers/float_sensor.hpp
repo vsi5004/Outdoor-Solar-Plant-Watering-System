@@ -4,6 +4,11 @@
 #include "hal/iadc_channel.hpp"
 #include "config.hpp"
 
+struct WaterLevelReading {
+    float   millivolts;
+    uint8_t percent;
+};
+
 // Reads the variable-resistance float sensor and returns a calibrated water
 // level percentage.
 //
@@ -24,6 +29,10 @@ public:
 
     // Trigger an ADC conversion and return water level as 0–100 %.
     uint8_t getPercent() const override;
+
+    // Trigger one ADC conversion and return both raw millivolts and calibrated
+    // percentage. Useful for logging/calibration without sampling twice.
+    WaterLevelReading getReading() const;
 
 private:
     IAdcChannel& adc_;

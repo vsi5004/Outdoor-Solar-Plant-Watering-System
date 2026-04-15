@@ -2,6 +2,12 @@
 # Values here are applied when no sdkconfig exists yet.
 # Run `idf.py menuconfig` to override; committed sdkconfig takes precedence.
 
+# ── Partition table ───────────────────────────────────────────────────────────
+# Custom table adds zb_storage (NVS partition required by the Zigbee stack to
+# persist network credentials and routing/binding tables across reboots).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
 # ── Zigbee ────────────────────────────────────────────────────────────────────
 # Enable the Zigbee stack and configure the device as a Full Function Device
 # (router role) so it can relay traffic for other Zigbee nodes on the network.

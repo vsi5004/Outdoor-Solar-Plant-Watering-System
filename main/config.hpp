@@ -35,16 +35,16 @@ namespace config
         constexpr int DRV_MASTER_EN = 21; // GPIO21
 
         // BTS7960 board #1 — left half: pump (LPWM hardwired GND) | right half: solenoid 5
-        constexpr int PUMP_RPWM = 7;  // GPIO7   LEDC_CHANNEL_0
-        constexpr int SOL5_RPWM = 6;  // GPIO6   LEDC_CHANNEL_1
+        constexpr int PUMP_RPWM = 7; // GPIO7   LEDC_CHANNEL_0
+        constexpr int SOL5_RPWM = 6; // GPIO6   LEDC_CHANNEL_1
 
         // BTS7960 board #2 — left half: solenoid 1 | right half: solenoid 2
-        constexpr int SOL1_LPWM = 11;  // GPIO11  LEDC_CHANNEL_2
-        constexpr int SOL2_RPWM = 18;  // GPIO18  LEDC_CHANNEL_3
+        constexpr int SOL1_LPWM = 11; // GPIO11  LEDC_CHANNEL_2
+        constexpr int SOL2_RPWM = 18; // GPIO18  LEDC_CHANNEL_3
 
         // BTS7960 board #3 — left half: solenoid 3 | right half: solenoid 4
-        constexpr int SOL3_LPWM = 19;  // GPIO19  LEDC_CHANNEL_4
-        constexpr int SOL4_RPWM = 20;  // GPIO20  LEDC_CHANNEL_5
+        constexpr int SOL3_LPWM = 19; // GPIO19  LEDC_CHANNEL_4
+        constexpr int SOL4_RPWM = 20; // GPIO20  LEDC_CHANNEL_5
 
     } // namespace pins
 
@@ -59,7 +59,7 @@ namespace config
         constexpr int SOL4_CH = 5; // LEDC_CHANNEL_5 — solenoid 4 RPWM
 
         constexpr uint32_t FREQUENCY_HZ = 25'000; // above audible range; coil whine inaudible
-        constexpr uint32_t RESOLUTION_BITS = 10; // duty range: 0–1023
+        constexpr uint32_t RESOLUTION_BITS = 10;  // duty range: 0–1023
     } // namespace ledc
 
     // ── ADC channel assignments (ADC1 only — oneshot API) ───────────────────────
@@ -79,6 +79,11 @@ namespace config
         constexpr uint8_t MODBUS_ADDR = 0x01;
         constexpr uint32_t POLL_INTERVAL_MS = 30'000;
         constexpr uint32_t RESPONSE_TIMEOUT_MS = 500;
+        // Time between Renogy acknowledging setLoad(true) and energizing the
+        // first downstream actuator. If the controller's physical load output
+        // rises later than the Modbus acknowledgement, include that extra lag
+        // in this value.
+        constexpr uint32_t LOAD_ENABLE_SETTLE_MS = 2'000;
         // Data older than this triggers FaultCode::StaleData. 3× poll interval
         // gives two missed polls before a watering cycle is blocked.
         constexpr uint32_t STALE_THRESHOLD_MS = 3u * POLL_INTERVAL_MS; // 90 s
@@ -88,18 +93,18 @@ namespace config
     namespace solenoid
     {
         // Pull-in phase: full burst to seat the plunger.
-        constexpr uint8_t  PULL_IN_DUTY_PCT = 85;  // empirically determined
-        constexpr uint32_t PULL_IN_MS       = 100; // empirically determined
+        constexpr uint8_t PULL_IN_DUTY_PCT = 85; // empirically determined
+        constexpr uint32_t PULL_IN_MS = 100;     // empirically determined
 
         // Hold duty — enough to keep the plunger seated, low enough to limit heat.
-        constexpr uint8_t HOLD_DUTY_PCT = 20; // empirically determined
+        constexpr uint8_t HOLD_DUTY_PCT = 25; // empirically determined
     } // namespace solenoid
 
     // ── Pump ──────────────────────────────────────────────────────────────────────
     namespace pump
     {
         // Duty % applied during dispensing — empirically determined.
-        constexpr uint8_t DUTY_PCT = 50;
+        constexpr uint8_t DUTY_PCT = 70;
 
         // Maximum time to wait for flow pulses before declaring a prime fault.
         constexpr uint32_t PRIME_TIMEOUT_MS = 15'000;
@@ -107,16 +112,37 @@ namespace config
         // Minimum pulse count before the pump is considered primed.
         constexpr uint32_t PRIME_PULSE_COUNT = 5;
 
+        // Default and user-configurable per-zone watering durations.
+        constexpr uint32_t DEFAULT_WATERING_DURATION_SEC = 15;
+        constexpr uint32_t MIN_WATERING_DURATION_SEC = 1;
+        constexpr uint32_t MAX_WATERING_DURATION_SEC = 30u * 60u;
+
         // Hard cap on watering duration regardless of HA command.
         constexpr uint32_t MAX_DISPENSE_MS = 30u * 60u * 1'000u; // 30 minutes
     } // namespace pump
+
+    // ── Zigbee device identity (read by Z2M during interview) ────────────────────
+    namespace zigbee
+    {
+        constexpr char MANUFACTURER_NAME[] = "Ivanbuilds";
+        constexpr char MODEL_IDENTIFIER[] = "solar-plant-waterer";
+
+        // Development recovery switch: set true, flash once, let the device
+        // boot and erase Zigbee network/reporting state, then set false again.
+        // This clears only the Zigbee stack storage partition, not the whole MCU.
+        constexpr bool ERASE_NVRAM_ON_BOOT = false;
+
+        // Give Zigbee2MQTT time to finish its interview before this custom
+        // device starts sending unsolicited attribute reports.
+        constexpr uint32_t REPORT_DELAY_AFTER_JOIN_MS = 60'000;
+    } // namespace zigbee
 
     // ── Safety thresholds ─────────────────────────────────────────────────────────
     namespace safety
     {
         // Watering is blocked at or below these levels.
         constexpr uint8_t MIN_BATTERY_SOC_PCT = 15;
-        constexpr uint8_t MIN_WATER_LEVEL_PCT = 10;
+        constexpr uint8_t MIN_WATER_LEVEL_PCT = 5;
     } // namespace safety
 
     // ── Flow meter calibration ───────────────────────────────────────────────────
@@ -137,7 +163,7 @@ namespace config
         // (sensor as lower leg) gives a higher voltage when empty and lower
         // voltage when full: FLOAT_EMPTY_MV > FLOAT_FULL_MV.
         // CALIBRATE: measure with reservoir completely empty and completely full.
-        constexpr float FLOAT_EMPTY_MV = 1407.0f;
+        constexpr float FLOAT_EMPTY_MV = 1390.0f;
         constexpr float FLOAT_FULL_MV = 315.0f;
     } // namespace sensor
 
@@ -158,6 +184,9 @@ static_assert(config::solenoid::HOLD_DUTY_PCT > 0 && config::solenoid::HOLD_DUTY
 
 static_assert(config::solenoid::PULL_IN_MS > 0,
               "PULL_IN_MS must be positive");
+
+static_assert(config::renogy::LOAD_ENABLE_SETTLE_MS > 0,
+              "LOAD_ENABLE_SETTLE_MS must be positive");
 
 static_assert(config::pump::PRIME_PULSE_COUNT > 0,
               "PRIME_PULSE_COUNT must be positive");

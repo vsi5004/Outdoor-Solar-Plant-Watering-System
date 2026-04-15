@@ -9,9 +9,17 @@ FloatSensor::FloatSensor(IAdcChannel& adc, float emptyMv, float fullMv)
 
 uint8_t FloatSensor::getPercent() const
 {
-    const float mv    = adc_.readMillivolts();
+    return getReading().percent;
+}
+
+WaterLevelReading FloatSensor::getReading() const
+{
+    const float mv = adc_.readMillivolts();
     const float ratio = (mv - emptyMv_) / (fullMv_ - emptyMv_);
     const float pct   = std::clamp(ratio, 0.0f, 1.0f) * 100.0f;
     // Add 0.5 before truncation to round to the nearest integer percentage.
-    return static_cast<uint8_t>(pct + 0.5f);
+    return {
+        .millivolts = mv,
+        .percent    = static_cast<uint8_t>(pct + 0.5f),
+    };
 }

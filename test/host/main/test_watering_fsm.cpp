@@ -83,6 +83,21 @@ static void test_request_rejected_when_tank_low(void)
     TEST_ASSERT_EQUAL(FaultCode::LowWater, f.fsm.getLastFault());
 }
 
+static void test_precheck_fault_does_not_mark_previous_zone_fault(void)
+{
+    Fixture f;
+    TEST_ASSERT_TRUE(f.sendRequest(ZoneId::Zone1, 60));
+    f.simulatePrime();
+    f.advanceMs(60'000);
+    TEST_ASSERT_EQUAL(ZoneStatus::Idle, f.fsm.getZoneStatus(ZoneId::Zone1));
+
+    f.tank.percent_ = config::safety::MIN_WATER_LEVEL_PCT;
+    TEST_ASSERT_FALSE(f.sendRequest(ZoneId::Zone2));
+    TEST_ASSERT_EQUAL(FaultCode::LowWater, f.fsm.getLastFault());
+    TEST_ASSERT_EQUAL(ZoneStatus::Idle,    f.fsm.getZoneStatus(ZoneId::Zone1));
+    TEST_ASSERT_EQUAL(ZoneStatus::Idle,    f.fsm.getZoneStatus(ZoneId::Zone2));
+}
+
 static void test_load_enable_failure_causes_fault(void)
 {
     Fixture f;
@@ -154,9 +169,53 @@ static void test_request_ignored_when_already_active(void)
     TEST_ASSERT_FALSE(f.sendRequest(ZoneId::Zone2));
     TEST_ASSERT_EQUAL(ZoneStatus::Priming, f.fsm.getZoneStatus(ZoneId::Zone1));
     TEST_ASSERT_EQUAL(ZoneStatus::Idle,    f.fsm.getZoneStatus(ZoneId::Zone2));
+    TEST_ASSERT_EQUAL(FaultCode::None,     f.fsm.getLastFault());
 }
 
 // ── Priming → Watering ────────────────────────────────────────────────────────
+
+static void test_busy_request_does_not_open_second_zone(void)
+{
+    Fixture f;
+    f.sendRequest(ZoneId::Zone1);
+    TEST_ASSERT_FALSE(f.sendRequest(ZoneId::Zone2));
+    TEST_ASSERT_TRUE(f.zones.isOpen(ZoneId::Zone1));
+    TEST_ASSERT_FALSE(f.zones.isOpen(ZoneId::Zone2));
+    TEST_ASSERT_EQUAL(1, f.zones.openCalls_);
+}
+
+static void test_busy_request_during_running_does_not_open_second_zone(void)
+{
+    Fixture f;
+    f.sendRequest(ZoneId::Zone1);
+    f.simulatePrime();
+    TEST_ASSERT_FALSE(f.sendRequest(ZoneId::Zone2));
+    TEST_ASSERT_EQUAL(ZoneStatus::Running, f.fsm.getZoneStatus(ZoneId::Zone1));
+    TEST_ASSERT_EQUAL(ZoneStatus::Idle,    f.fsm.getZoneStatus(ZoneId::Zone2));
+    TEST_ASSERT_TRUE(f.zones.isOpen(ZoneId::Zone1));
+    TEST_ASSERT_FALSE(f.zones.isOpen(ZoneId::Zone2));
+    TEST_ASSERT_EQUAL(FaultCode::None,     f.fsm.getLastFault());
+}
+
+static void test_busy_request_does_not_restart_pump_or_load(void)
+{
+    Fixture f;
+    f.sendRequest(ZoneId::Zone1);
+    TEST_ASSERT_FALSE(f.sendRequest(ZoneId::Zone2));
+    TEST_ASSERT_EQUAL(1, f.pump.setSpeedCalls_);
+    TEST_ASSERT_EQUAL(1, f.renogy.setLoadCallCount_);
+    TEST_ASSERT_TRUE(f.renogy.lastLoadState_);
+}
+
+static void test_duplicate_request_for_active_zone_is_ignored_without_fault(void)
+{
+    Fixture f;
+    f.sendRequest(ZoneId::Zone1);
+    TEST_ASSERT_FALSE(f.sendRequest(ZoneId::Zone1));
+    TEST_ASSERT_EQUAL(ZoneStatus::Priming, f.fsm.getZoneStatus(ZoneId::Zone1));
+    TEST_ASSERT_EQUAL(FaultCode::None,     f.fsm.getLastFault());
+    TEST_ASSERT_TRUE(f.zones.isOpen(ZoneId::Zone1));
+}
 
 static void test_prime_detected_transitions_to_running(void)
 {
@@ -374,6 +433,7 @@ void run_watering_fsm_tests(void)
     RUN_TEST(test_request_rejected_when_duration_zero);
     RUN_TEST(test_request_rejected_when_battery_low);
     RUN_TEST(test_request_rejected_when_tank_low);
+    RUN_TEST(test_precheck_fault_does_not_mark_previous_zone_fault);
     RUN_TEST(test_load_enable_failure_causes_fault);
     RUN_TEST(test_load_enable_failure_does_not_start_pump);
     RUN_TEST(test_valid_request_returns_true);
@@ -383,6 +443,10 @@ void run_watering_fsm_tests(void)
     RUN_TEST(test_valid_request_resets_flow_meter);
     RUN_TEST(test_valid_request_zone_status_is_priming);
     RUN_TEST(test_request_ignored_when_already_active);
+    RUN_TEST(test_busy_request_does_not_open_second_zone);
+    RUN_TEST(test_busy_request_during_running_does_not_open_second_zone);
+    RUN_TEST(test_busy_request_does_not_restart_pump_or_load);
+    RUN_TEST(test_duplicate_request_for_active_zone_is_ignored_without_fault);
     RUN_TEST(test_prime_detected_transitions_to_running);
     RUN_TEST(test_prime_timeout_causes_fault);
     RUN_TEST(test_prime_timeout_stops_pump_and_closes_zones);

@@ -2,9 +2,9 @@
 
 ## Overview
 
-An ESP32-C6 WROOM coordinates a solar-powered, multi-zone balcony plant watering system. It communicates with Home Assistant via Zigbee and manages a pump, five solenoid valves, a flow meter, water level sensor, and a Renogy solar charge controller over Modbus RTU.
+An ESP32-C6 WROOM coordinates a solar-powered, multi-zone balcony plant watering system. It joins the home Zigbee network as a router, communicates with Home Assistant through Zigbee2MQTT, and manages a pump, five solenoid valves, a flow meter, water level sensor, and a Renogy solar charge controller over Modbus RTU.
 
-The firmware owns all timing and safety logic. Home Assistant sends a start command and a duration — the firmware executes and self-terminates. No watering cycle timing depends on wireless connectivity.
+The firmware owns all timing and safety logic. Home Assistant writes optional per-zone watering durations and sends zone On/Off commands; the firmware executes the cycle and self-terminates. No watering cycle timing depends on wireless connectivity.
 
 ---
 
@@ -36,12 +36,12 @@ The firmware owns all timing and safety logic. Home Assistant sends a start comm
 
 ---
 
-## Pin Assignment (config.h)
+## Pin Assignment (`config.hpp`)
 
 All hardware mappings defined in one place. Based on the ESP32-C6-DevKitC-1 pinout.
 
 **Pins reserved / avoided:**
-- GPIO8 — onboard RGB LED + boot strapping pin
+- GPIO8 - onboard RGB status LED + boot strapping pin; do not wire an external load
 - GPIO9 — boot strapping pin
 - GPIO12/13 — USB D-/D+
 - GPIO15 — JTAG (leave free during development)
@@ -102,129 +102,132 @@ All hardware mappings defined in one place. Based on the ESP32-C6-DevKitC-1 pino
 | GPIO21 | MASTER_EN all boards | All 6 EN pins wired to this |
 | GPIO16 | U0TXD debug serial | Reserved — do not use |
 | GPIO17 | U0RXD debug serial | Reserved — do not use |
-| GPIO8 | RGB LED | Reserved — boot strapping pin |
+| GPIO8 | RGB LED | Onboard status LED; boot strapping pin |
 | GPIO9 | — | Reserved — boot strapping pin |
 | GPIO12 | USB D- | Reserved |
 | GPIO13 | USB D+ | Reserved |
 
 ---
 
-## Watering Constants (config.h)
+## Watering Constants (`config.hpp`)
 
-```c
-// Solenoid PWM behavior
-#define SOL_PULL_IN_MS          120       // Full duty duration on open
-#define SOL_HOLD_DUTY_PCT       38        // Hold duty after pull-in (~30-40% typical)
-#define SOL_HOLD_CURRENT_MA     180       // Expected solenoid 5 hold current (calibrate)
+```cpp
+namespace config::solenoid {
+    constexpr uint8_t  PULL_IN_DUTY_PCT = 85;
+    constexpr uint32_t PULL_IN_MS       = 100;
+    constexpr uint8_t  HOLD_DUTY_PCT    = 25;
+}
 
-// Pump
-#define PUMP_PRIME_TIMEOUT_MS   15000     // Max time to wait for flow pulses
-#define PUMP_PRIME_PULSE_COUNT  5         // Pulses before considered primed
-#define PUMP_DRY_RUN_MA         200       // Below this while running = dry run fault
-#define MAX_DISPENSE_MS         (30 * 60 * 1000)  // 30 min hard cap
+namespace config::pump {
+    constexpr uint8_t  DUTY_PCT                  = 70;
+    constexpr uint32_t PRIME_TIMEOUT_MS          = 15'000;
+    constexpr uint32_t PRIME_PULSE_COUNT         = 5;
+    constexpr uint32_t DEFAULT_WATERING_DURATION_SEC = 15;
+    constexpr uint32_t MIN_WATERING_DURATION_SEC = 1;
+    constexpr uint32_t MAX_WATERING_DURATION_SEC = 30u * 60u;
+    constexpr uint32_t MAX_DISPENSE_MS           = 30u * 60u * 1'000u;
+}
 
-// Safety thresholds
-#define MIN_BATTERY_SOC_PCT     15
-#define MIN_WATER_LEVEL_PCT     10
+namespace config::safety {
+    constexpr uint8_t MIN_BATTERY_SOC_PCT = 15;
+    constexpr uint8_t MIN_WATER_LEVEL_PCT = 5;
+}
 
-// Flow calibration — derived from datasheet F = 23.6 × Q (Hz, L/min)
-// mL/pulse = 1000 / (60 × 23.6) ≈ 0.706
-constexpr float ML_PER_PULSE = 0.706f;
+namespace config::flow {
+    constexpr float ML_PER_PULSE = 0.706f;
+}
 
-// Renogy polling
-#define RENOGY_POLL_INTERVAL_MS 30000
+namespace config::sensor {
+    constexpr float FLOAT_EMPTY_MV = 1390.0f;
+    constexpr float FLOAT_FULL_MV  = 315.0f;
+}
+
+namespace config::renogy {
+    constexpr uint32_t POLL_INTERVAL_MS      = 30'000;
+    constexpr uint32_t RESPONSE_TIMEOUT_MS   = 500;
+    constexpr uint32_t LOAD_ENABLE_SETTLE_MS = 2'000;
+    constexpr uint32_t STALE_THRESHOLD_MS    = 3u * POLL_INTERVAL_MS;
+}
 ```
 
 ---
 
 ## Project Structure
 
-```
+```text
 plant-waterer/
-├── main/
-│   ├── main.c                  # App entry, task and queue creation
-│   ├── config.h                # All pin defs, constants, thresholds
-│   ├── drivers/
-│   │   ├── bts7960.h/.c        # PWM control + IS current readback
-│   │   ├── flow_meter.h/.c     # PCNT pulse counter + ml calculation
-│   │   ├── float_sensor.h/.c   # ADC water level → percentage
-│   │   └── renogy.h/.c         # Modbus RTU UART driver
-│   ├── watering/
-│   │   ├── zone.h/.c           # Per-zone config, open/close, solenoid mapping
-│   │   ├── scheduler.h/.c      # Time-based schedule → posts to water_queue
-│   │   └── fsm.h/.c            # Watering state machine task
-│   └── zigbee/
-│       ├── zb_device.h/.c      # Cluster/endpoint registration, attribute updates
-│       └── zb_handlers.h/.c    # Command callbacks from HA
-├── CMakeLists.txt
-└── sdkconfig
+|-- main/
+|   |-- main.cpp                  # App entry, task creation, periodic reporting/logging
+|   |-- config.hpp                # Pins, constants, thresholds, Zigbee identity
+|   |-- drivers/
+|   |   |-- pump_actuator.*        # Pump PWM actuator
+|   |   |-- solenoid_actuator.*    # Solenoid pull-in/hold PWM actuator
+|   |   |-- flow_meter.*           # PCNT pulse counter and ml calculation
+|   |   |-- float_sensor.*         # ADC water level to percentage/mV reading
+|   |   |-- renogy_driver.*        # Modbus RTU UART driver
+|   |   `-- i*.hpp                 # Interfaces used by FSM tests
+|   |-- hal/                       # ESP-IDF GPIO, ADC, PCNT, UART, LEDC adapters
+|   |-- watering/
+|   |   |-- watering_fsm.*         # Safety state machine
+|   |   |-- zone_manager.*         # Zone mapping/open/close helpers
+|   |   |-- fault_code.hpp         # Stable HA/Z2M fault enum
+|   |   `-- zone_*.hpp             # Zone id/status/request value types
+|   `-- zb/
+|       |-- zb_device.*            # Endpoint registration and attribute reports
+|       `-- zb_handlers.*          # ZCL On/Off to command queue bridge
+|-- zigbee2mqtt/
+|   `-- solar-plant-waterer.mjs    # External converter deployed to Z2M
+|-- test/
+|-- partitions.csv                 # App + ESP Zigbee storage partition layout
+|-- CMakeLists.txt
+`-- sdkconfig
 ```
 
 ---
 
-## Driver: BTS7960 (bts7960.h/.c)
+## Flash Partition Layout
+
+`partitions.csv` is part of the firmware contract. The ESP Zigbee stack stores
+network and factory state in named FAT data partitions, so the names and
+subtypes matter.
+
+| Name | Type | Subtype | Offset | Size | Purpose |
+|---|---|---|---|---|---|
+| `nvs` | data | nvs | `0x9000` | `0x6000` | ESP-IDF NVS |
+| `phy_init` | data | phy | `0xf000` | `0x1000` | RF calibration data |
+| `factory` | app | factory | `0x10000` | `0xf0000` | Main firmware image |
+| `zb_storage` | data | fat | `0x100000` | `0x4000` | Zigbee network/reporting storage |
+| `zb_fct` | data | fat | `0x104000` | `0x400` | Zigbee factory data |
+
+---
+
+## Drivers: Pump and Solenoids (`pump_actuator.*`, `solenoid_actuator.*`)
+
+The pump and solenoid outputs are thin wrappers around the shared LEDC PWM HAL.
+The watering FSM talks to them through `IPumpActuator` and `IZoneManager`, which
+keeps the safety logic host-testable.
 
 ### Key Behaviors
 
-**Pump (left half of board #1):**
-- LPWM permanently tied LOW (one-way valve — no reverse)
-- RPWM controls speed via LEDC PWM (0–100%)
-- R_EN high to enable, low to coast-stop
+**Pump:**
+- LPWM is permanently tied low because the pump is one-way only
+- RPWM is driven by `PumpActuator::setSpeed(percent)` using `config::pump::DUTY_PCT` during watering
+- `PumpActuator::stop()` sets duty to 0 immediately
 
-**Solenoids (right half of board #1, both halves of boards #2 and #3):**
-- Each half-bridge drives one solenoid: output pin to solenoid+, solenoid- to GND
-- Pull-in phase: 100% duty for `SOL_PULL_IN_MS` milliseconds
-- Hold phase: `SOL_HOLD_DUTY_PCT`% duty — reduces coil heat, maintains open state
-- Caller invokes `bts7960_solenoid_pulse()` to open; must call `bts7960_solenoid_off()` to close
+**Solenoids:**
+- `SolenoidActuator::open()` applies `PULL_IN_DUTY_PCT` for `PULL_IN_MS`, then drops to `HOLD_DUTY_PCT`
+- The watering startup sequence relies on that blocking pull-in interval so the pump is only started after the selected valve has had `PULL_IN_MS` to open
+- `SolenoidActuator::close()` sets duty to 0
+- `ZoneManager::closeAll()` is used by all fault, cancel, and normal-stop paths
 
-**LEDC Configuration:**
-- Timer: ~1kHz, 10-bit resolution (0–1023)
-- Each board needs up to 2 LEDC channels (one per active half)
-- Use `LEDC_LOW_SPEED_MODE`
+**LEDC configuration:**
+- Frequency: `config::ledc::FREQUENCY_HZ` (25 kHz)
+- Resolution: `config::ledc::RESOLUTION_BITS` (10-bit duty range)
+- Channels are assigned in `config::ledc` and kept one channel per active PWM output
 
-**IS Pin (current sense):**
-- Single IS pin shared across both half-bridges per chip
-- Output current = I_load / 8500 (approximate, verify datasheet revision)
-- With 1kΩ sense resistor to GND: V_IS = I_load / 8500 * 1000
-- Therefore: I_load_mA = V_IS * 8500
-- Read via `adc_oneshot` API
-
-**Solenoid 5 / Pump IS correction:**
-Boards #1 shares IS between pump (left) and solenoid 5 (right). Since they are active simultaneously during zone 5 watering:
-
-```c
-float read_pump_current_ma(void) {
-    float total = bts7960_read_current_ma(&drv1);
-    if (zone_is_open(5)) {
-        total -= SOL_HOLD_CURRENT_MA;  // Subtract known solenoid 5 hold current
-    }
-    return total;
-}
-```
-
-Dry-run detection threshold (~1–2A) is well above solenoid noise so the correction margin is comfortable.
-
-### Data Structure
-
-```c
-typedef struct {
-    int rpwm_pin, lpwm_pin;
-    int r_en_pin, l_en_pin;
-    int is_adc_channel;
-    ledc_channel_t r_channel;
-    ledc_channel_t l_channel;
-} bts7960_t;
-```
-
-### Functions to Implement
-
-```c
-void  bts7960_init(bts7960_t *dev);
-void  bts7960_pump_set(bts7960_t *dev, uint8_t duty_pct);
-void  bts7960_solenoid_pulse(bts7960_t *dev, bool use_right_half);
-void  bts7960_solenoid_off(bts7960_t *dev, bool use_right_half);
-float bts7960_read_current_ma(bts7960_t *dev);
-```
+Current-sense based dry-run detection is not part of the active firmware. Dry/empty
+conditions are currently detected by reservoir level, Renogy freshness, battery SOC,
+and prime-timeout flow pulses.
 
 ---
 
@@ -233,7 +236,7 @@ float bts7960_read_current_ma(bts7960_t *dev);
 Uses the ESP-IDF **PCNT** (Pulse Counter) peripheral — hardware accelerated, zero CPU overhead.
 Implemented as `EspPcnt` (HAL) + `FlowMeter` (driver).
 
-- Counts rising edges on `FLOW_METER_PIN` (GPIO6)
+- Counts rising edges on `FLOW_METER_PIN` (GPIO15)
 - PCNT high limit: 32767, low limit: -32768, accumulate-across-overflow enabled
 - `reset()` clears the hardware counter at pump start
 - `getPulses()` → raw rising-edge count
@@ -292,7 +295,7 @@ Higher fill level → lower sensor resistance → lower ADC voltage.
 
 | Level | ADC voltage |
 |-------|------------|
-| Empty | 1361 mV    |
+| Empty | 1390 mV    |
 | Full  | 315 mV     |
 
 Values stored in `config::sensor::FLOAT_EMPTY_MV` / `FLOAT_FULL_MV`.
@@ -380,144 +383,100 @@ struct RenogyData {
 
 ---
 
-## Zone Mapping (zone.h/.c)
+## Zone Mapping (`zone_manager.*`)
 
-Map zone numbers 1–5 to their driver board and half-bridge side.
+`ZoneManager` maps `ZoneId::Zone1` through `ZoneId::Zone5` to the five
+solenoid actuators. The FSM never drives solenoids directly; it calls
+`zones_.open(zone)`, `zones_.close(zone)`, or `zones_.closeAll()`.
 
-```c
-typedef struct {
-    bts7960_t *driver;
-    bool       use_right_half;   // false = left (LPWM), true = right (RPWM)
-    bool       is_open;
-    char       name[16];
-} zone_t;
-```
+| Zone | Driver board | Half | PWM pin | Notes |
+|---|---|---|---|---|
+| 1 | BTS7960 #2 | Left | GPIO11 | LPWM |
+| 2 | BTS7960 #2 | Right | GPIO18 | RPWM |
+| 3 | BTS7960 #3 | Left | GPIO19 | LPWM |
+| 4 | BTS7960 #3 | Right | GPIO20 | RPWM |
+| 5 | BTS7960 #1 | Right | GPIO6 | RPWM; shares board with pump |
 
-Zone table:
+Public surface used by the FSM:
 
-| Zone | Driver | Half | Notes |
-|---|---|---|---|
-| 1 | drv2 | Left | LPWM |
-| 2 | drv2 | Right | RPWM |
-| 3 | drv3 | Left | LPWM |
-| 4 | drv3 | Right | RPWM |
-| 5 | drv1 | Right | RPWM — shares IS with pump |
-
-**Functions:**
-```c
-void zone_open(uint8_t zone_num);    // pull-in then hold
-void zone_close(uint8_t zone_num);
-void zone_close_all(void);
-bool zone_is_open(uint8_t zone_num);
+```cpp
+void ZoneManager::open(ZoneId zone);
+void ZoneManager::close(ZoneId zone);
+void ZoneManager::closeAll();
+bool ZoneManager::isOpen(ZoneId zone) const;
 ```
 
 ---
 
-## Watering State Machine (fsm.h/.c)
+## Watering State Machine (`watering_fsm.hpp/.cpp`)
 
-Runs in its own FreeRTOS task at priority 5, 10Hz tick rate.
+Ticked by `wateringTask` at 10Hz. The FSM is intentionally small: all prechecks
+happen before hardware is energized, and any fault path calls `stopAll()`.
 
 ### States
 
-```c
-typedef enum {
-    WS_IDLE,
-    WS_PRECHECK,         // Verify battery SOC and water level
-    WS_OPEN_SOLENOID,    // Open target zone valve
-    WS_START_PUMP,       // Enable pump, reset flow counter
-    WS_PRIMING,          // Wait for flow pulses (air purge)
-    WS_DISPENSING,       // Track volume + current, self-terminate on duration
-    WS_STOP_PUMP,        // Halt pump, pressure equalize delay
-    WS_CLOSE_SOLENOID,   // Close valve, report completion to Zigbee
-    WS_FAULT,            // Emergency stop all, report fault to HA
-} watering_state_t;
+```cpp
+enum class State : uint8_t {
+    Idle,
+    Priming,
+    Watering,
+    Fault,
+};
 ```
 
 ### Context
 
-```c
-typedef struct {
-    watering_state_t state;
-    uint8_t          zone;
-    uint32_t         duration_sec;        // Set at start — never changes mid-cycle
-    uint32_t         dispense_start_ms;
-    uint32_t         ml_dispensed;
-    watering_source_t source;             // HA_MANUAL, HA_SCHEDULE, LOCAL_SCHEDULE
-} watering_ctx_t;
+```cpp
+WateringRequest req_;
+uint32_t        phaseStartMs_;
+uint32_t        targetDurationMs_;
+uint32_t        deliveredMl_;
+FaultCode       fault_;
 ```
 
 ### Request Queue
 
-```c
-typedef struct {
-    uint8_t  zone;
-    uint32_t duration_sec;
-    watering_source_t source;
-} watering_request_t;
-
-extern QueueHandle_t water_queue;  // xQueueCreate(5, sizeof(watering_request_t))
+```cpp
+struct WateringRequest {
+    ZoneId      zone;
+    uint32_t    durationSec;
+    WaterSource source;
+};
 ```
 
 ### State Transition Logic
 
-**WS_IDLE:**
-- Poll `water_queue` (non-blocking)
-- On receipt → populate ctx, transition to `WS_PRECHECK`
+**`request(req, nowMs)`:**
+- Reject unless the FSM is `Idle`
+- Validate zone and duration; invalid input raises `FaultCode::InvalidRequest`
+- Read the latest Renogy snapshot; absent or stale data raises `FaultCode::StaleData`
+- Reject below `MIN_BATTERY_SOC_PCT` with `FaultCode::LowBattery`
+- Reject below `MIN_WATER_LEVEL_PCT` with `FaultCode::LowWater`
+- Enable the Renogy load output; failure raises `FaultCode::LoadEnableFailed`
+- Wait one `config::solenoid::PULL_IN_MS` interval for the Renogy load path to settle
+- Reset the flow meter, open the requested zone, let `zones_.open(req_.zone)` complete the solenoid pull-in interval, then start the pump and enter `Priming`
 
-**WS_PRECHECK:**
-- Read latest `renogy_data_t` (mutex-protected)
-- If `battery_soc < MIN_BATTERY_SOC_PCT` → `FAULT_LOW_BATTERY`
-- If `float_sensor_get_pct() < MIN_WATER_LEVEL_PCT` → `FAULT_LOW_WATER`
-- If `duration_sec == 0` → `FAULT_INVALID_REQUEST`
-- Pass → `WS_OPEN_SOLENOID`
+**`Priming`:**
+- Wait until `flow.getPulses()` reaches `PRIME_PULSE_COUNT`
+- If `PRIME_TIMEOUT_MS` expires first, raise `FaultCode::PrimeTimeout`
+- On success, reset the phase timer and enter `Watering`
 
-**WS_OPEN_SOLENOID:**
-- Call `zone_open(ctx.zone)` (triggers pull-in → hold sequence inside driver)
-- Wait 200ms for solenoid to fully open
-- → `WS_START_PUMP`
+**`Watering`:**
+- Stop normally when `targetDurationMs_` expires
+- Raise `FaultCode::MaxDuration` if `MAX_DISPENSE_MS` is reached first
+- Re-check Renogy freshness and battery SOC while running
+- Record delivered milliliters from the flow meter on completion, cancel, or fault
 
-**WS_START_PUMP:**
-- `flow_meter_reset()`
-- `ctx.dispense_start_ms = now`
-- `bts7960_pump_set(&drv1_pump, 100)`
-- `zb_set_zone_status(ctx.zone, ZONE_STATUS_PRIMING)`
-- → `WS_PRIMING`
-
-**WS_PRIMING:**
-- If `flow_meter_get_pulses() > PUMP_PRIME_PULSE_COUNT` → `WS_DISPENSING`
-- If elapsed > `PUMP_PRIME_TIMEOUT_MS` → `FAULT_PRIME_TIMEOUT` → `WS_STOP_PUMP`
-- Optionally cross-reference IS current: low & noisy = air, higher & steadier = water
-
-**WS_DISPENSING:**
-- Update `ctx.ml_dispensed = flow_meter_get_ml()`
-- If elapsed >= `ctx.duration_sec * 1000` → `WS_STOP_PUMP` ← **primary termination**
-- If elapsed >= `MAX_DISPENSE_MS` → `FAULT_MAX_DURATION` → `WS_STOP_PUMP` ← **hard cap**
-- If `read_pump_current_ma() < PUMP_DRY_RUN_MA` → `FAULT_DRY_RUN` → `WS_STOP_PUMP`
-- Push live progress: `zb_set_zone_ml_dispensed(ctx.zone, ctx.ml_dispensed)`
-
-**WS_STOP_PUMP:**
-- `bts7960_pump_set(&drv1_pump, 0)`
-- Delay 500ms (pressure equalization)
-- → `WS_CLOSE_SOLENOID`
-
-**WS_CLOSE_SOLENOID:**
-- `zone_close(ctx.zone)`
-- `zb_set_zone_status(ctx.zone, ZONE_STATUS_IDLE)`
-- `zb_set_zone_state(ctx.zone, false)` ← sync Zigbee On/Off attribute back to OFF
-- `zb_report_zone_complete(ctx.zone, ctx.ml_dispensed)`
-- → `WS_IDLE`
-
-**WS_FAULT:**
-- `gpio_set_level(DRV_MASTER_EN_PIN, 0)` ← cuts all boards instantly, no PWM sequencing needed
-- `zone_close_all()` ← also zero out all PWM duty registers for clean re-enable later
-- `zb_set_zone_status(ctx.zone, ZONE_STATUS_FAULT)`
-- `zb_report_fault(active_fault)`
-- → `WS_IDLE` (or latch until cleared by HA command)
+**`Fault`:**
+- `enterFault()` records delivered volume, calls `stopAll()`, stores the fault code, and leaves the FSM latched in `Fault`
+- `clearFault()` transitions `Fault` back to `Idle`
+- `cancel()` stops an active `Priming` or `Watering` cycle and returns to `Idle`
 
 ### Safety Interlock (enforced in firmware regardless of HA state)
 - Pump must NEVER run with all solenoids closed (dead-head risk)
-- Pump is only started from `WS_START_PUMP` which always follows `WS_OPEN_SOLENOID`
-- On any fault → pump stops before or simultaneously with solenoid close
+- Pump starts only after the Renogy load settle delay and after `zones_.open(req_.zone)` completes its solenoid pull-in interval in `request()`
+- `stopAll()` stops the pump, closes all zones, and disables the Renogy load
+- Faults remain latched until an explicit clear command is received
 
 ---
 
@@ -528,294 +487,401 @@ enum class FaultCode : uint8_t {
     None             = 0,
     LowBattery       = 1,  // Battery SOC below MIN_BATTERY_SOC_PCT
     LowWater         = 2,  // Reservoir below MIN_WATER_LEVEL_PCT
-    PrimeTimeout     = 3,  // No flow pulses within PUMP_PRIME_TIMEOUT_MS
-    DryRun           = 4,  // Pump IS current below DRY_RUN_MA while dispensing
-    MaxDuration      = 5,  // Watering exceeded MAX_DISPENSE_MS hard cap
-    InvalidRequest   = 6,  // duration_sec == 0 or zone out of range
-    LoadEnableFailed = 7,  // Renogy setLoad(true) returned false before pump start
+    PrimeTimeout     = 3,  // No flow pulses within config::pump::PRIME_TIMEOUT_MS
+    MaxDuration      = 4,  // Watering exceeded MAX_DISPENSE_MS hard cap
+    InvalidRequest   = 5,  // duration_sec == 0 or zone out of range
+    LoadEnableFailed = 6,  // Renogy setLoad(true) returned false
+    StaleData        = 7,  // Renogy data absent or older than STALE_THRESHOLD_MS
 };
 ```
 
-Values are stable — do not reorder. HA automations may key off the integer value
-reported on EP 41.
+Values are stable: do not reorder. HA automations may key off the text value
+published by the Zigbee2MQTT converter or the integer value reported on EP 41.
+
+| Code | HA value | Meaning |
+|---|---|---|
+| 0 | `none` | No active fault |
+| 1 | `battery_low` | Renogy SOC is at or below `MIN_BATTERY_SOC_PCT` |
+| 2 | `water_low` | Reservoir level is at or below `MIN_WATER_LEVEL_PCT` |
+| 3 | `prime_timeout` | Flow pulses did not arrive before `config::pump::PRIME_TIMEOUT_MS` |
+| 4 | `max_duration` | Watering exceeded `MAX_DISPENSE_MS` |
+| 5 | `invalid_request` | Bad zone or zero duration |
+| 6 | `load_enable_failed` | Renogy `setLoad(true)` failed before pump start |
+| 7 | `stale_data` | Renogy data is absent or older than `STALE_THRESHOLD_MS` |
+
+Faults are latched by the watering FSM until cleared. Any zone `Off` command
+cancels active watering and clears the latched fault; the Zigbee2MQTT converter
+exposes this as a Home Assistant `Clear fault` button.
 
 ---
 
-## Task Architecture (main.c)
+## Task Architecture (main.cpp)
 
-```c
+```cpp
 void app_main(void) {
     // Init order matters
-    adc_init();                 // Shared ADC1 handle
-    flow_meter_init();
-    bts7960_init_all();         // Init all three driver structs + LEDC
-    renogy_uart_init();
-    zigbee_init();              // Starts Zigbee stack task internally
+    s_driver.init();
+    s_flow.init();
+    s_floatSensor.init();
+    s_renogy.init();
+    s_cmdQueue = xQueueCreate(8, sizeof(ZbWateringCmd));
+    ZbHandlers::init(s_cmdQueue);  // initializes per-zone duration defaults
 
-    water_queue = xQueueCreate(5, sizeof(watering_request_t));
-
-    xTaskCreate(watering_task,  "watering", 4096, NULL, 5, NULL);
-    xTaskCreate(renogy_task,    "renogy",   2048, NULL, 2, NULL);
-    xTaskCreate(adc_task,       "adc",      2048, NULL, 3, NULL);
-    xTaskCreate(scheduler_task, "sched",    2048, NULL, 2, NULL);
+    xTaskCreate(zbTask,          "zb",      6144, nullptr, 5, nullptr);
+    xTaskCreate(wateringTask,    "water",   4096, nullptr, 3, nullptr);
+    xTaskCreate(renogyTask,      "renogy",  3072, nullptr, 2, nullptr);
+    xTaskCreate(StatusLed::runTask, "led",  2048, nullptr, 1, nullptr);
 }
 ```
 
 | Task | Priority | Rate | Responsibility |
 |---|---|---|---|
-| `watering_task` | 5 | 10Hz FSM tick | Pump, solenoid, fault handling |
-| `adc_task` | 3 | 4Hz | IS current readback, float sensor |
-| `renogy_task` | 2 | 1/30s | Modbus poll, update solar struct |
-| `scheduler_task` | 2 | 1/min | Time-based schedules → water_queue |
-| Zigbee (internal) | — | Event-driven | HA communication |
+| `zbTask` | 5 | Event loop | Register endpoints, start Zigbee, run `esp_zb_stack_main_loop()` |
+| `wateringTask` | 3 | 10Hz FSM tick | Drain Zigbee command queue, tick watering FSM, report zone/fault/water-level state |
+| `renogyTask` | 2 | 1/30s | Modbus poll, report battery and solar telemetry |
+| `StatusLed::runTask` | 1 | Internal blink cadence | Show boot, join, watering, and fault state |
+| Zigbee stack | Internal | Event-driven | ZCL command callbacks and attribute reporting |
 
 **Shared data access:**
-- `renogy_data_t` protected by `SemaphoreHandle_t renogy_mutex`
-- `adc_task` writes IS currents and float level to atomic globals read by FSM and Zigbee tasks
+- `RenogyDriver::getData()` returns a mutex-protected copy of the latest Modbus snapshot
+- Zigbee commands are posted as `ZbWateringCmd` items so the Zigbee stack callback never blocks on watering or I/O work
 - Zigbee attribute writes use `esp_zb_lock_acquire` / `esp_zb_lock_release`
+- One-shot attribute reports are suppressed until the Zigbee interview grace period expires (`config::zigbee::REPORT_DELAY_AFTER_JOIN_MS`)
+
+### Status LED
+
+`StatusLed` drives the onboard ESP32-C6 WS2812 on GPIO8 through the ESP-IDF
+`led_strip` RMT driver. State is stored in an atomic so `wateringTask`,
+`renogyTask`, and Zigbee join handling can update it without queueing.
+
+| Firmware state | LED behavior |
+|---|---|
+| Booting / joining | Slow amber pulse |
+| Joined / idle | Brief green heartbeat every 5 seconds |
+| Watering | Solid cyan |
+| Fault | Rapid red blink |
 
 ---
 
-## Zigbee Interface (zb_device.h/.c + zb_handlers.h/.c)
+## Zigbee Interface (`zb_device.hpp/.cpp` + `zb_handlers.hpp/.cpp`)
 
 ### Design Principle
 
-HA sends: `duration_seconds` (write to Analog Output attribute) + `On` command (to On/Off cluster).
-Firmware runs the cycle and self-terminates.
-HA receives: live status updates via attribute reporting.
-HA sends `Off` command only to abort an in-progress cycle.
+HA sends `On` or `Off` commands to the zone On/Off endpoints exposed by
+Zigbee2MQTT. HA can also write a per-zone duration to each zone endpoint's
+Analog Output cluster. An `On` command enqueues a watering request using that
+zone's stored duration. An `Off` command cancels active watering and clears any
+latched fault, which is how the HA `Clear fault` button works.
+
+Firmware runs the cycle and self-terminates. HA receives live zone state,
+fault state, battery data, solar telemetry, charging status, and water level via
+Zigbee attribute reports.
 
 ### Endpoint Layout
 
 | EP | Cluster | Role | Content |
 |---|---|---|---|
 | 1 | Basic + Identify | Server | Mandatory Zigbee device descriptors |
-| 10 | On/Off | Server | Zone 1 active state (on = Priming or Running) |
-| 11 | On/Off | Server | Zone 2 active state |
-| 12 | On/Off | Server | Zone 3 active state |
-| 13 | On/Off | Server | Zone 4 active state |
-| 14 | On/Off | Server | Zone 5 active state |
-| 20 | Power Configuration | Server | `BatteryPercentageRemaining` (SOC × 2), `BatteryVoltage` (V × 10) |
+| 10 | On/Off + Analog Output | Server | Zone 1 active state plus writable duration in seconds |
+| 11 | On/Off + Analog Output | Server | Zone 2 active state plus writable duration in seconds |
+| 12 | On/Off + Analog Output | Server | Zone 3 active state plus writable duration in seconds |
+| 13 | On/Off + Analog Output | Server | Zone 4 active state plus writable duration in seconds |
+| 14 | On/Off + Analog Output | Server | Zone 5 active state plus writable duration in seconds |
+| 20 | Power Configuration + Analog Input | Server | `BatteryPercentageRemaining` (SOC × 2), `BatteryVoltage` (V × 10), active zone as float (`0.0`=none, `1.0`-`5.0`=zone number) |
 | 21 | Analog Input | Server | Max charging power today (W) |
 | 22 | Analog Input | Server | Daily solar generation (Wh) |
 | 23 | Analog Input | Server | Daily power consumption (Wh) |
-| 41 | Multistate Input | Server | `FaultCode` (8 states, 0 = None) |
-| 42 | Multistate Input | Server | Charging status (7 states: 0=not started … 5=float … 6=current limiting) |
+| 24 | Analog Input | Server | Battery voltage (V) |
+| 25 | Analog Input | Server | PV voltage (V) |
+| 26 | Analog Input | Server | PV power (W) |
+| 27 | Analog Input | Server | Controller temperature (deg C) |
+| 28 | Analog Input | Server | Reservoir water level (%) |
+| 41 | Analog Input | Server | `FaultCode` as float (`0.0` = None) |
+| 42 | Analog Input | Server | Charging status as float (`0.0`=not started ... `5.0`=float ... `6.0`=current limiting) |
+| 43 | On/Off + Analog Input | Server | Momentary clear-fault command plus waterer state as float (`0.0`=idle, `1.0`=priming, `2.0`=watering, `3.0`=fault) |
 
-All Renogy data comes from the background `renogy_task` polling at 30s intervals.
-Zone on/off states are pushed from the `watering_task` on every state change.
+All Renogy data comes from the background `renogyTask` polling at 30s intervals.
+Zone on/off states are pushed from `wateringTask` on every state change.
+`waterer_state` and `active_zone` are also pushed from `wateringTask` whenever
+the aggregate controller state changes.
 
 ### Status Enum
 
-```c
-typedef enum {
-    ZONE_STATUS_IDLE    = 0,
-    ZONE_STATUS_PRIMING = 1,
-    ZONE_STATUS_RUNNING = 2,
-    ZONE_STATUS_FAULT   = 3,
-} zone_status_t;
+```cpp
+enum class ZoneStatus : uint8_t {
+    Idle    = 0,
+    Priming = 1,
+    Running = 2,
+    Fault   = 3,
+};
 ```
 
-### Command Handler (zb_handlers.c)
+### Command Handler (`ZbHandlers`)
 
-```c
-esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t cb_id,
-                             const void *msg) {
-    if (cb_id == ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID) {
-        const esp_zb_zcl_set_attr_value_message_t *m = msg;
-        uint8_t ep = m->info.dst_endpoint;
+```cpp
+struct ZbWateringCmd {
+    enum class Type : uint8_t { Request, Cancel, ClearFault };
+    Type     type;
+    ZoneId   zone;
+    uint32_t durationSec;
+};
 
-        if (m->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF && ep >= 1 && ep <= 5) {
-            bool on = *(bool *)m->attribute.data.value;
-            if (on) {
-                uint16_t duration_sec = zb_get_zone_duration(ep);
-                if (duration_sec == 0) {
-                    zb_set_zone_status(ep, ZONE_STATUS_FAULT);
-                    return ESP_OK;
-                }
-                watering_request_t req = {
-                    .zone = ep,
-                    .duration_sec = duration_sec,
-                    .source = WATER_SRC_HA_MANUAL,
-                };
-                xQueueSend(water_queue, &req, 0);
-            } else {
-                watering_abort_zone(ep);
-            }
-        }
-    }
-
-    if (cb_id == ESP_ZB_CORE_NETWORK_JOIN_CB_ID) {
-        configure_reporting();   // Set up attribute reporting after join
-    }
-
-    return ESP_OK;
-}
+ZbHandlers::init(s_cmdQueue, 15);
 ```
+
+`ZbHandlers::onAction()` is registered as the ESP Zigbee core action handler.
+It translates On/Off writes on endpoints 10-14 into queue messages:
+
+| ZCL command | Firmware action |
+|---|---|
+| Zone endpoint Analog Output `presentValue` write | Store that zone's duration, clamped to 1-1800 seconds |
+| Zone endpoint `On` | Enqueue `Request` with that zone's stored duration |
+| Zone endpoint `Off` | Enqueue `Cancel`; `wateringTask` also calls `clearFault()` |
+| Clear-fault endpoint 43 `On` | Enqueue `ClearFault`; firmware resets EP43 back to Off |
+
+If a zone `On` command arrives while another zone is already `Priming` or
+`Running`, the FSM rejects it without raising a fault. The firmware reports the
+newly requested inactive zone back to Off so the HA switch reflects reality.
+
+The callback only posts to the queue. The watering task owns all slow work:
+prechecks, Renogy load control, pump/solenoid sequencing, fault clearing, and
+logs.
 
 ### Public Update Functions
 
-```c
-void zb_set_zone_state(uint8_t zone, bool on);
-void zb_set_zone_status(uint8_t zone, zone_status_t status);
-void zb_set_zone_ml_dispensed(uint8_t zone, uint32_t ml);
-void zb_set_analog(uint8_t endpoint, float value);
-void zb_set_battery_soc(uint8_t percent);
-void zb_report_fault(fault_code_t fault);
-uint16_t zb_get_zone_duration(uint8_t zone_ep);
+```cpp
+void ZbDevice::reportZoneStatus(ZoneId zone, ZoneStatus status);
+void ZbDevice::reportBattery(uint8_t socPct, float voltageV);
+void ZbDevice::reportSolarData(float batteryVoltageV,
+                               float pvVoltageV,
+                               uint16_t pvPowerW,
+                               float controllerTempC,
+                               uint16_t maxChargingPowerW,
+                               uint16_t dailyGenerationWh,
+                               uint16_t dailyConsumptionWh,
+                               uint8_t chargingStatus);
+void ZbDevice::reportWaterLevel(uint8_t percent);
+void ZbDevice::reportFault(FaultCode code);
+void ZbDevice::reportWatererState(uint8_t stateCode);
+void ZbDevice::reportActiveZone(uint8_t zoneNumber);
+bool ZbDevice::isJoined();
+bool ZbDevice::reportsEnabled();
 ```
 
 ### Attribute Reporting Configuration
 
-Call `configure_reporting()` after network join. Configure each sensor endpoint with:
-- `min_interval`: 5s (no faster)
-- `max_interval`: 60s (force periodic report)
-- Report on change (delta appropriate to each sensor)
+`ZbDevice::configureReporting()` is called after network steering succeeds. It
+updates the ZBOSS reporting table for every reportable attribute so stale entries
+from earlier firmware builds do not fire reports against removed endpoints or
+attributes.
 
-Zone status and ml_dispensed should report on every change during an active cycle.
+Sensor telemetry is pushed with one-shot `esp_zb_zcl_report_attr_cmd_req()`
+calls after `reportsEnabled()` returns true. The post-join delay gives
+Zigbee2MQTT time to finish the interview before the device starts sending
+unsolicited reports.
+
+Zone endpoints report On when the FSM state is `Priming` or `Running`, and Off
+when the state is `Idle` or `Fault`. The firmware sends these updates on every
+zone state change.
 
 ### Zigbee Device Config
 
-```c
+```cpp
 esp_zb_cfg_t zb_cfg = {
-    .esp_zb_role = ESP_ZB_DEVICE_TYPE_ED,   // End device (not router)
+    .esp_zb_role         = ESP_ZB_DEVICE_TYPE_ROUTER,
     .install_code_policy = false,
+    .nwk_cfg.zczr_cfg = {
+        .max_children = 10,
+    },
 };
-#define ZB_PRIMARY_CHANNEL_MASK (1l << 15)   // Match your coordinator channel
+
+esp_zb_set_primary_network_channel_set(ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK);
 ```
 
-Model string (used by Z2M for custom converter matching):
-```c
-// Set during endpoint registration
-// Model: "PlantWaterer"
-// Manufacturer: "DIY"
+Model string and manufacturer are set on the Basic cluster and are used by
+Zigbee2MQTT to match the external converter:
+
+| Field | Value |
+|---|---|
+| Model identifier | `solar-plant-waterer` |
+| Manufacturer | `Ivanbuilds` |
+
+Development recovery switch:
+
+```cpp
+config::zigbee::ERASE_NVRAM_ON_BOOT = false;
 ```
+
+Set this to `true` for exactly one boot if stale Zigbee storage is causing bad
+interviews or old reporting entries. Flash back to `false` immediately after the
+device rejoins, otherwise the device will forget its network on every reboot.
 
 ---
 
-## Zigbee2MQTT Custom Converter (plant_waterer.js)
+## Zigbee2MQTT External Converter
 
-Place in Z2M `data/external_converters/` directory.
+The repository keeps the active converter at
+`zigbee2mqtt/solar-plant-waterer.mjs`. Copy that file to the Zigbee2MQTT data
+directory:
 
-```javascript
-const {onOff, numeric} = require('zigbee-herdsman-converters/lib/modernExtend');
-
-const definition = {
-    zigbeeModel: ['PlantWaterer'],
-    model: 'PLANT-WATERER-1',
-    vendor: 'DIY',
-    description: 'Solar balcony plant watering system',
-    extend: [
-        onOff({ endpointNames: ['zone_1','zone_2','zone_3','zone_4','zone_5','pump'] }),
-
-        // Zone duration (writable) + status + volume per zone
-        ...[1,2,3,4,5].flatMap(z => [
-            numeric({
-                name: `zone_${z}_duration`,
-                cluster: 'genAnalogOutput',
-                attribute: 'presentValue',
-                unit: 's', min: 10, max: 1800, step: 10,
-                endpoint: `zone_${z}`,
-                access: 'ALL',
-            }),
-            numeric({
-                name: `zone_${z}_status`,
-                cluster: 'genAnalogInput',
-                attribute: 'presentValue',
-                description: '0=idle 1=priming 2=running 3=fault',
-                endpoint: `zone_${z}_status`,
-                access: 'STATE',
-            }),
-            numeric({
-                name: `zone_${z}_ml_dispensed`,
-                cluster: 'genAnalogInput',
-                attribute: 'presentValue',
-                unit: 'mL',
-                endpoint: `zone_${z}_vol`,
-                access: 'STATE',
-            }),
-        ]),
-
-        numeric({ name: 'water_level',    cluster: 'genAnalogInput', attribute: 'presentValue', unit: '%',     endpoint: 'water_level', access: 'STATE', device_class: 'moisture' }),
-        numeric({ name: 'flow_rate',      cluster: 'genAnalogInput', attribute: 'presentValue', unit: 'mL/min',endpoint: 'flow_rate',   access: 'STATE' }),
-        numeric({ name: 'pv_voltage',     cluster: 'genAnalogInput', attribute: 'presentValue', unit: 'V',     endpoint: 'pv_volt',     access: 'STATE', device_class: 'voltage' }),
-        numeric({ name: 'pv_power',       cluster: 'genAnalogInput', attribute: 'presentValue', unit: 'W',     endpoint: 'pv_power',    access: 'STATE', device_class: 'power' }),
-        numeric({ name: 'battery_voltage',cluster: 'genAnalogInput', attribute: 'presentValue', unit: 'V',     endpoint: 'batt_volt',   access: 'STATE', device_class: 'voltage' }),
-        numeric({ name: 'pump_current',   cluster: 'genAnalogInput', attribute: 'presentValue', unit: 'mA',    endpoint: 'pump_curr',   access: 'STATE', device_class: 'current' }),
-        numeric({ name: 'fault_code',     cluster: 'genAnalogInput', attribute: 'presentValue',               endpoint: 'faults',      access: 'STATE' }),
-    ],
-
-    endpoint: (device) => ({
-        zone_1: 1, zone_2: 2, zone_3: 3, zone_4: 4, zone_5: 5,
-        pump: 6,
-        zone_1_status: 10, zone_2_status: 11, zone_3_status: 12,
-        zone_4_status: 13, zone_5_status: 14,
-        zone_1_vol: 15, zone_2_vol: 16, zone_3_vol: 17,
-        zone_4_vol: 18, zone_5_vol: 19,
-        water_level: 20, flow_rate: 21,
-        batt_soc: 30, batt_volt: 31, pv_volt: 32, pv_power: 33,
-        pump_curr: 40, faults: 41,
-    }),
-    meta: { multiEndpoint: true },
-};
-
-module.exports = definition;
+```text
+data/external_converters/solar-plant-waterer.mjs
 ```
+
+Restart Zigbee2MQTT and verify startup includes:
+
+```text
+Loaded external converter 'solar-plant-waterer.mjs'.
+```
+
+Converter identity:
+
+| Field | Value |
+|---|---|
+| `zigbeeModel` | `solar-plant-waterer` |
+| Z2M model | `solar-plant-waterer` |
+| Vendor | `Ivanbuilds` |
+
+The converter uses ESM imports from `zigbee-herdsman-converters`, maps endpoint
+10-14 to `zone_1` through `zone_5`, and exposes zone controls with:
+
+```js
+m.deviceEndpoints({
+    endpoints: {
+        zone_1: 10,
+        zone_2: 11,
+        zone_3: 12,
+        zone_4: 13,
+        zone_5: 14,
+    },
+});
+
+m.onOff({
+    endpointNames: ['zone_1', 'zone_2', 'zone_3', 'zone_4', 'zone_5'],
+    powerOnBehavior: false,
+});
+```
+
+Analog Input reports are decoded by source endpoint:
+
+| EP | Z2M property |
+|---|---|
+| 20 | `active_zone` |
+| 21 | `max_charging_power_today` |
+| 22 | `daily_solar_generation` |
+| 23 | `daily_power_consumption` |
+| 24 | `battery_voltage` |
+| 25 | `pv_voltage` |
+| 26 | `pv_power` |
+| 27 | `controller_temperature` |
+| 28 | `water_level` |
+| 41 | `fault_code` |
+| 42 | `charging_status` |
+| 43 | `waterer_state` |
+
+EP43 also carries the `clear_fault` On/Off command endpoint. Power
+Configuration reports provide `battery` and `battery_voltage`. The fault,
+charging, waterer-state, and active-zone endpoints are converted from numeric
+Analog Input values to stable text enums.
+
+Analog Output writes on the zone endpoints configure watering durations:
+
+| EP | Z2M property |
+|---|---|
+| 10 | `duration_zone_1` |
+| 11 | `duration_zone_2` |
+| 12 | `duration_zone_3` |
+| 13 | `duration_zone_4` |
+| 14 | `duration_zone_5` |
+
+Each duration is exposed as an HA number entity in seconds. The converter and
+firmware both clamp values to `config::pump::MIN_WATERING_DURATION_SEC` through
+`config::pump::MAX_WATERING_DURATION_SEC`.
+
+Because the converter uses Zigbee2MQTT multi-endpoint mode, HA writes
+`duration_zone_N` but `convertSet` receives the normalized key `duration` plus
+endpoint metadata. The converter resolves the endpoint, writes
+`genAnalogOutput.presentValue`, and returns the base `duration` state so
+Zigbee2MQTT publishes the correctly suffixed property for that endpoint.
+
+The converter also exposes a writable `clear_fault` enum. Its `convertSet`
+handler sends `genOnOff.on` to endpoint 43. The firmware handles that as an
+explicit clear-fault command and resets endpoint 43 back to Off, so repeated
+button presses always create a new On transition.
+
+Home Assistant discovery names for the power and energy sensors are overridden
+in `overrideHaDiscoveryPayload` so HA displays `PV power`, `Max charging power
+today`, `Daily solar generation`, and `Daily power consumption` instead of
+generic `Power` / `Energy` labels.
 
 ---
 
 ## Home Assistant Integration
 
-### Manual Watering Script
+After the external converter is loaded and the device interview completes, Home
+Assistant discovers the device through the MQTT integration. Rename the
+Zigbee2MQTT friendly name if you want stable, friendly entity IDs; otherwise HA
+will use the IEEE address in the generated entity IDs.
+
+### Exposed Entities
+
+| Entity type | Purpose |
+|---|---|
+| `switch.zone_1` ... `switch.zone_5` | Manual watering controls |
+| `number.duration_zone_1` ... `number.duration_zone_5` | Duration used by the next On command for each zone |
+| `button.clear_fault` | Acknowledge and clear a latched fault |
+| `sensor.battery` | Renogy battery SOC (%) |
+| `sensor.battery_voltage` | Renogy battery voltage (V) |
+| `sensor.pv_voltage` | Solar input voltage (V) |
+| `sensor.pv_power` | Solar input power (W) |
+| `sensor.controller_temperature` | Controller temperature (deg C) |
+| `sensor.water_level` | Reservoir fill level (%) |
+| `sensor.max_charging_power_today` | Renogy daily max charge power (W) |
+| `sensor.daily_solar_generation` | Renogy daily generation (Wh) |
+| `sensor.daily_power_consumption` | Renogy daily consumption (Wh) |
+| `sensor.fault_code` | Text fault enum |
+| `sensor.charging_status` | Text charging-stage enum |
+| `sensor.waterer_state` | Aggregate controller state: `idle`, `priming`, `watering`, or `fault` |
+| `sensor.active_zone` | FSM-owned zone: `none` or `zone_1` through `zone_5` |
+
+### Manual Watering
 
 ```yaml
-script:
-  water_zone:
-    alias: "Water Zone"
-    fields:
-      zone:
-        description: "Zone number 1-5"
-        example: 1
-      duration_seconds:
-        description: "Duration in seconds"
-        example: 120
-    sequence:
-      - service: number.set_value
-        target:
-          entity_id: "number.zone_{{ zone }}_duration"
-        data:
-          value: "{{ duration_seconds }}"
-      - delay:
-          milliseconds: 200
-      - service: switch.turn_on
-        target:
-          entity_id: "switch.zone_{{ zone }}"
-      # Script exits here — firmware owns the rest
+service: switch.turn_on
+target:
+  entity_id: switch.zone_1
 ```
 
-### Dashboard Card (per zone)
+For automations, use `sensor.waterer_state` as the HA-side busy guard:
 
 ```yaml
-type: horizontal-stack
-cards:
-  - type: entity
-    entity: number.zone_1_duration
-    name: "Zone 1 (s)"
-  - type: button
-    name: "Water"
-    icon: mdi:watering-can
-    tap_action:
-      action: call-service
-      service: script.water_zone
-      service_data:
-        zone: 1
-        duration_seconds: "{{ states('number.zone_1_duration') | int }}"
-  - type: entity
-    entity: sensor.zone_1_status
-    name: "Status"
-  - type: entity
-    entity: sensor.zone_1_ml_dispensed
-    name: "mL"
+condition:
+  - condition: state
+    entity_id: sensor.0x1051dbfffe0d375c_waterer_state
+    state: idle
+```
+
+`active_zone` reports the zone currently being primed/watered, or the faulted
+zone when the fault happened after a valve opened. Precheck faults such as low
+water report `waterer_state=fault` and `active_zone=none`.
+
+The firmware owns the duration and self-termination. Turn the same switch off to
+abort an active run and clear any latched fault:
+
+```yaml
+service: switch.turn_off
+target:
+  entity_id: switch.zone_1
+```
+
+To customize a zone duration before watering:
+
+```yaml
+service: number.set_value
+target:
+  entity_id: number.0x1051dbfffe0d375c_duration_zone_1
+data:
+  value: 45
 ```
 
 ### Emergency Stop All
@@ -837,6 +903,64 @@ tap_action:
       - switch.zone_5
 ```
 
+### Fault Notification and Clear
+
+This pattern reports a fault and then presses the converter-provided clear
+button. Adjust the entity IDs to match the friendly name in your installation.
+
+```yaml
+alias: Plant waterer fault notify and clear
+mode: queued
+trigger:
+  - platform: state
+    entity_id: sensor.0x1051dbfffe0d375c_fault_code
+condition:
+  - condition: template
+    value_template: "{{ trigger.to_state.state not in ['none', 'unknown', 'unavailable'] }}"
+action:
+  - service: notify.mobile_app_phone
+    data:
+      title: Plant waterer fault
+      message: "{{ trigger.to_state.state }}"
+  - service: button.press
+    target:
+      entity_id: button.0x1051dbfffe0d375c_clear_fault
+```
+
+### Firmware Logs
+
+The serial log intentionally mirrors the HA-visible state so field debugging is
+possible without a packet sniffer:
+
+```text
+Zone 1 duration set to 45 s
+Zone 1 ON command received (45 s)
+Zone 1 watering started (45 s)
+Zone 2 ON command received (15 s)
+Zone 2 request ignored: watering already in progress
+Zone 2 switch forced off because another zone is active
+Zone 1 request rejected: water_low (2)
+Zone 1 switch forced off after rejected request
+Zone 1 OFF command received
+Fault clear requested via Zone 1 OFF: water_low (2)
+Zone 1 status: idle -> priming
+Zone 1 status: priming -> running
+Zone 1 status: running -> idle
+Waterer state: priming
+Active zone: 1
+Waterer state: idle
+Active zone: 0
+Fault raised: prime_timeout (3)
+Clear fault command received
+Fault clear requested: prime_timeout (3)
+Fault cleared
+Water level: 100% (315 mV)
+Renogy poll OK: SOC 100% 13.3V PV 0.0V 0W maxChg=0W gen=0Wh con=0Wh status=0
+```
+
+Water-level logging occurs on the same cadence as the water-level Zigbee report,
+currently `config::renogy::POLL_INTERVAL_MS` (30 seconds).
+
 ---
 
 ## Build Order / Development Sequence
@@ -848,7 +972,7 @@ Work in this order so each layer is testable before the next:
 3. **Flow meter** — run water through sensor, verify pulse rate matches F=23.6×Q; confirm mL/pulse against a measured volume
 4. **Float sensor** — read ADC at full and empty reservoir; map to 0–100%
 5. **Renogy Modbus** — verify register reads match controller display via serial monitor
-6. **FSM dry run** — simulate a full watering cycle with `ESP_LOGI` logging and no water; verify state transitions and fault paths
+6. **FSM simulation** — simulate a full watering cycle with `ESP_LOGI` logging and no water; verify state transitions and fault paths
 7. **Zigbee** — add last; pair with Z2M, verify entity discovery in HA, test start/abort commands
 
 ---

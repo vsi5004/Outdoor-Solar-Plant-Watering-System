@@ -70,4 +70,5 @@ private:
     uint32_t        phaseStartMs_     = 0;
     uint32_t        targetDurationMs_ = 0;
     uint32_t        deliveredMl_      = 0;
+    bool            zoneOwned_        = false;
 };

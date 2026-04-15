@@ -8,9 +8,9 @@
 // The watering task drains this queue each tick, keeping the Zigbee
 // stack task free regardless of how long FSM or I/O operations take.
 struct ZbWateringCmd {
-    enum class Type : uint8_t { Request, Cancel };
+    enum class Type : uint8_t { Request, Cancel, ClearFault };
     Type     type;
-    ZoneId   zone;        // Request only
+    ZoneId   zone;        // Request/Cancel only
     uint32_t durationSec; // Request only
 };
 
@@ -20,9 +20,12 @@ struct ZbWateringCmd {
 // onAction() is registered by ZbDevice::init() via
 // esp_zb_core_action_handler_register().
 //
-// On/Off cluster behaviour (EP 10–14):
-//   On  command → enqueues Request with the configured default duration
+// Zone endpoint behaviour (EP 10–14):
+//   Analog Output PresentValue → stores per-zone duration in seconds
+//   On  command → enqueues Request with that zone's stored duration
 //   Off command → enqueues Cancel
+// Clear fault endpoint (EP 43):
+//   On command → enqueues ClearFault, then firmware resets EP 43 back to Off
 class ZbHandlers {
 public:
     // Bind to the command queue drained by the watering task.
@@ -37,7 +40,10 @@ public:
 private:
     static QueueHandle_t cmdQueue_;
     static uint32_t      defaultDurationSec_;
+    static uint32_t      zoneDurationSec_[ZONE_COUNT];
 
     // Handle ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID — enqueues Request or Cancel.
-    static esp_err_t handleSetAttr(const esp_zb_zcl_set_attr_value_params_t* p);
+    static esp_err_t handleSetAttr(const esp_zb_zcl_set_attr_value_message_t* p);
+    static esp_err_t handleZoneDurationSet(const esp_zb_zcl_set_attr_value_message_t* p);
+    static uint32_t clampDurationSec(float requestedSec);
 };

@@ -8,6 +8,7 @@ idf_component_register(
         "hal/esp_uart.cpp"
         "hal/esp_pcnt.cpp"
         "hal/esp_gpio.cpp"
+        "hal/status_led.cpp"
 
         # Drivers
         "drivers/solenoid_actuator.cpp"
@@ -34,4 +35,5 @@ idf_component_register(
         freertos
         nvs_flash
         espressif__esp-zigbee-lib
+        espressif__led_strip
 )
