@@ -1,5 +1,11 @@
 # Solar Balcony Plant Watering System — Firmware
 
+[![Host Tests](https://github.com/vsi5004/Outdoor-Solar-Plant-Watering-System/actions/workflows/ci.yml/badge.svg)](https://github.com/vsi5004/Outdoor-Solar-Plant-Watering-System/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/vsi5004/Outdoor-Solar-Plant-Watering-System)](https://github.com/vsi5004/Outdoor-Solar-Plant-Watering-System/releases/latest)
+![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.4.1-blue)
+![ESP32-C6](https://img.shields.io/badge/chip-ESP32--C6-red)
+[![License: BSD 2-Clause](https://img.shields.io/badge/License-BSD_2--Clause-orange.svg)](LICENSE)
+
 ESP32-C6 firmware for a solar-powered, 5-zone balcony plant watering system.
 Communicates with Home Assistant via Zigbee (router) and manages a pump,
 five solenoid valves, a flow meter, a water level sensor, and a Renogy solar

@@ -1,0 +1,118 @@
+name: Build and Release Firmware
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.4.1
+          target: esp32c6
+          command: idf.py build
+
+      - name: Fix build directory permissions
+        run: sudo chown -R $USER:$USER build/
+
+      - name: Get version info
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT_HASH" >> $GITHUB_OUTPUT
+
+      - name: Create merged binary
+        run: |
+          pip install esptool
+          cd build
+          esptool.py --chip esp32c6 merge_bin \
+            -o plant-waterer-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin \
+            --flash_mode dio \
+            --flash_size 2MB \
+            --flash_freq 80m \
+            0x0    bootloader/bootloader.bin \
+            0x8000 partition_table/partition-table.bin \
+            0x10000 plant-waterer.bin
+
+      - name: Prepare release files
+        run: |
+          cd build
+          mkdir -p release
+
+          cp bootloader/bootloader.bin \
+            release/bootloader-${{ steps.version.outputs.commit }}.bin
+          cp partition_table/partition-table.bin \
+            release/partition-table-${{ steps.version.outputs.commit }}.bin
+          cp plant-waterer.bin \
+            release/plant-waterer-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}.bin
+          cp plant-waterer-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin \
+            release/
+          cp flasher_args.json release/
+
+          cd release
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/release/*
+          generate_release_notes: true
+          body: |
+            ## Solar Plant Watering System ${{ steps.version.outputs.version }}
+
+            **Commit:** `${{ steps.version.outputs.commit }}`
+
+            ### Downloads
+
+            **Quick start:** download `plant-waterer-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin` and flash to address `0x0`:
+
+            ```bash
+            esptool.py --chip esp32c6 --port COMX write_flash 0x0 \
+              plant-waterer-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin
+            ```
+
+            **Advanced:** flash individual binaries to their respective addresses (see `FLASH_INSTRUCTIONS` in [FLASHING.md](https://github.com/vsi5004/Outdoor-Solar-Plant-Watering-System/blob/main/FLASHING.md)).
+
+            ### Files
+
+            | File | Description | Flash address |
+            |------|-------------|---------------|
+            | `plant-waterer-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin` | Complete image | `0x0` |
+            | `plant-waterer-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}.bin` | Application only | `0x10000` |
+            | `bootloader-${{ steps.version.outputs.commit }}.bin` | Bootloader | `0x0` |
+            | `partition-table-${{ steps.version.outputs.commit }}.bin` | Partition table | `0x8000` |
+            | `flasher_args.json` | Flash configuration reference | — |
+            | `SHA256SUMS.txt` | File checksums | — |
+
+            See [FLASHING.md](https://github.com/vsi5004/Outdoor-Solar-Plant-Watering-System/blob/main/FLASHING.md) for full instructions.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts (manual/dev runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}
+          path: build/release/*
+          retention-days: 30
