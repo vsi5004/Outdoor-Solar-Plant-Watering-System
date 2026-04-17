@@ -211,6 +211,7 @@ deployment. They are not part of CI.
 | 26 | Analog Input | PV power (W) |
 | 27 | Analog Input | Controller temperature (deg C) |
 | 28 | Analog Input | Reservoir water level (%) |
+| 31–35 | Analog Input | Zone 1–5 lifetime water total (L) |
 | 41 | Analog Input | Fault code (`0.0`–`7.0`; see `fault_code.hpp`) |
 | 42 | Analog Input | Charging status (`0.0`=off, `2.0`=MPPT, `5.0`=float, etc.) |
 | 43 | On/Off + Analog Input | Momentary clear-fault command + waterer state (`0.0`=idle, `1.0`=priming, `2.0`=watering, `3.0`=fault) |
@@ -259,6 +260,7 @@ The converter matches the Zigbee Basic cluster values:
 |---|---|
 | `switch.zone_1` ... `switch.zone_5` | On/Off endpoints 10-14 |
 | `number.duration_zone_1` ... `number.duration_zone_5` | Analog Output endpoints 10-14, 1-1800 seconds |
+| `sensor.zone_1_total_water` ... `sensor.zone_5_total_water` | Analog Input endpoints 31-35, lifetime water total in liters |
 | `sensor.battery` | Power Config battery percentage |
 | `sensor.battery_voltage` | Power Config + EP24 |
 | `sensor.pv_voltage` | EP25 Analog Input |
@@ -346,6 +348,33 @@ target:
   entity_id: button.0x1051dbfffe0d375c_clear_fault
 ```
 
+### Water Usage Totals
+
+The firmware accumulates dispensed water per zone from the flow meter. Totals are
+stored internally as milliliters, persisted to NVS after each non-zero watering
+delivery, and reported to Home Assistant as lifetime liters.
+
+| Entity | Meaning |
+|---|---|
+| `sensor.zone_1_total_water` ... `sensor.zone_5_total_water` | Monotonic lifetime water total for each zone |
+
+The Zigbee2MQTT converter marks these sensors as Home Assistant
+`device_class: water`, `state_class: total_increasing`, and unit `L`. The ESP32
+does not reset them daily; Home Assistant should derive daily totals with
+`utility_meter` so the controller does not need calendar time.
+
+Example daily totals:
+
+```yaml
+utility_meter:
+  plant_waterer_zone_1_daily_water:
+    source: sensor.0x1051dbfffe0d375c_zone_1_total_water
+    cycle: daily
+  plant_waterer_zone_2_daily_water:
+    source: sensor.0x1051dbfffe0d375c_zone_2_total_water
+    cycle: daily
+```
+
 ### Firmware Logs
 
 The serial log is intended to make field debugging possible without packet
@@ -365,10 +394,11 @@ Fault clear requested via Zone 1 OFF: water_low (2)
 Zone 1 status: idle -> priming
 Zone 1 status: priming -> running
 Zone 1 status: running -> idle
+Zone 1 dispensed 71 mL (lifetime 1042 mL / 1.042 L)
 Stopping pump
 Waiting 100 ms before closing solenoid
 Closing all solenoids
-Waiting 2000 ms before disabling Renogy load
+Waiting 4500 ms before disabling Renogy load
 Disabling Renogy load
 Waterer state: priming
 Active zone: 1
@@ -393,7 +423,7 @@ The onboard ESP32-C6 WS2812 on GPIO8 mirrors the firmware state:
 
 | State | LED behavior |
 |---|---|
-| Booting / joining | Slow amber pulse |
+| Booting / joining | Slow blue blink |
 | Joined / idle | Brief green heartbeat every 5 seconds |
 | Watering | Solid cyan |
 | Fault | Rapid red blink |

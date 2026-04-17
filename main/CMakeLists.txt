@@ -20,6 +20,7 @@ idf_component_register(
         # Watering logic
         "watering/zone_manager.cpp"
         "watering/watering_fsm.cpp"
+        "watering/water_usage_tracker.cpp"
 
         # Zigbee layer
         "zb/zb_device.cpp"

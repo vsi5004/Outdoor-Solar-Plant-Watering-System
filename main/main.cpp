@@ -1,9 +1,10 @@
-#include <array>
 #include <cstdint>
+#include <atomic>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_log.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 #include "esp_zigbee_core.h"
 
@@ -25,6 +26,7 @@
 // Watering
 #include "watering/zone_manager.hpp"
 #include "watering/watering_fsm.hpp"
+#include "watering/water_usage_tracker.hpp"
 
 // Zigbee
 #include "zb/zb_device.hpp"
@@ -39,6 +41,15 @@ static const char *TAG = "main";
 static void wateringTask(void *arg);
 static void renogyTask(void *arg);
 static void zbTask(void *arg);
+
+static void startNetworkSteering(uint8_t modeMask)
+{
+    const esp_err_t err = esp_zb_bdb_start_top_level_commissioning(modeMask);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to start network steering: %s", esp_err_to_name(err));
+    }
+}
 
 static const char *zoneStatusName(ZoneStatus status)
 {
@@ -145,10 +156,30 @@ static uint8_t activeZoneFromStatuses(const ZoneStatus (&statuses)[ZONE_COUNT])
     return 0u;
 }
 
+static const char *waterUsageNvsKey(ZoneId zone)
+{
+    switch (zone)
+    {
+    case ZoneId::Zone1:
+        return "z1_ml";
+    case ZoneId::Zone2:
+        return "z2_ml";
+    case ZoneId::Zone3:
+        return "z3_ml";
+    case ZoneId::Zone4:
+        return "z4_ml";
+    case ZoneId::Zone5:
+        return "z5_ml";
+    default:
+        return "unknown";
+    }
+}
+
 // ── Object graph (static storage — survives after app_main returns) ───────────
 
 // Queue for Zigbee → watering-task command handoff (depth 4, ZbWateringCmd items).
 static QueueHandle_t s_cmdQueue;
+static std::atomic_bool s_zigbeeJoined{false};
 
 // GPIO
 static EspGpio s_drvMasterEn(config::pins::DRV_MASTER_EN);
@@ -188,6 +219,72 @@ static RenogyDriver s_renogy(s_uart);
 // Zone manager and FSM (built after ADC objects are ready)
 static ZoneManager *s_zones = nullptr;
 static WateringFsm *s_fsm = nullptr;
+static WaterUsageTracker s_waterUsage;
+
+static void loadWaterUsageTotals()
+{
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open("water_usage", NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND)
+    {
+        ESP_LOGI(TAG, "No persisted water usage totals found");
+        return;
+    }
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to open water usage NVS namespace: %s", esp_err_to_name(err));
+        return;
+    }
+
+    for (uint8_t i = 0; i < ZONE_COUNT; ++i)
+    {
+        const auto zone = static_cast<ZoneId>(i + 1u);
+        uint64_t totalMl = 0u;
+        err = nvs_get_u64(handle, waterUsageNvsKey(zone), &totalMl);
+        if (err == ESP_OK)
+        {
+            s_waterUsage.setTotalMl(zone, totalMl);
+            ESP_LOGI(TAG, "Restored Zone %u water total: %llu mL",
+                     static_cast<unsigned>(zone),
+                     static_cast<unsigned long long>(totalMl));
+        }
+        else if (err != ESP_ERR_NVS_NOT_FOUND)
+        {
+            ESP_LOGW(TAG, "Failed to read Zone %u water total: %s",
+                     static_cast<unsigned>(zone),
+                     esp_err_to_name(err));
+        }
+    }
+
+    nvs_close(handle);
+}
+
+static void saveWaterUsageTotal(ZoneId zone)
+{
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open("water_usage", NVS_READWRITE, &handle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to open water usage NVS namespace for write: %s",
+                 esp_err_to_name(err));
+        return;
+    }
+
+    const uint64_t totalMl = s_waterUsage.getTotalMl(zone);
+    err = nvs_set_u64(handle, waterUsageNvsKey(zone), totalMl);
+    if (err == ESP_OK)
+    {
+        err = nvs_commit(handle);
+    }
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to persist Zone %u water total: %s",
+                 static_cast<unsigned>(zone),
+                 esp_err_to_name(err));
+    }
+
+    nvs_close(handle);
+}
 
 // ── Zigbee required callback ──────────────────────────────────────────────────
 
@@ -199,6 +296,7 @@ extern "C" void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     switch (sig)
     {
     case ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP:
+        ESP_LOGI(TAG, "Initializing Zigbee stack");
         esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_INITIALIZATION);
         break;
 
@@ -206,8 +304,28 @@ extern "C" void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
         if (signal_struct->esp_err_status == ESP_OK)
         {
-            ESP_LOGI(TAG, "Zigbee stack started — beginning network steering");
-            esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
+            const bool factoryNew = esp_zb_bdb_is_factory_new();
+            const bool joined = esp_zb_bdb_dev_joined();
+            ESP_LOGI(TAG, "Zigbee stack started in %s factory-reset mode, joined=%s",
+                     factoryNew ? "" : "non",
+                     joined ? "yes" : "no");
+            if (factoryNew || !joined)
+            {
+                ESP_LOGI(TAG, "Beginning network steering");
+                s_zigbeeJoined.store(false, std::memory_order_relaxed);
+                StatusLed::setState(StatusLed::State::Connecting);
+                startNetworkSteering(ESP_ZB_BDB_MODE_NETWORK_STEERING);
+            }
+            else
+            {
+                ZbDevice::configureReporting();
+                s_zigbeeJoined.store(true, std::memory_order_relaxed);
+                StatusLed::setState(StatusLed::State::Joined);
+                ESP_LOGI(TAG, "Using stored Zigbee network: PAN ID 0x%04x, channel %u, short address 0x%04x",
+                         esp_zb_get_pan_id(),
+                         static_cast<unsigned>(esp_zb_get_current_channel()),
+                         esp_zb_get_short_address());
+            }
         }
         else
         {
@@ -219,19 +337,32 @@ extern "C" void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
     case ESP_ZB_BDB_SIGNAL_STEERING:
         if (signal_struct->esp_err_status == ESP_OK)
         {
-            ESP_LOGI(TAG, "Joined Zigbee network — PAN ID 0x%04x",
-                     esp_zb_get_pan_id());
+            ESP_LOGI(TAG, "Joined Zigbee network: PAN ID 0x%04x, channel %u, short address 0x%04x",
+                     esp_zb_get_pan_id(),
+                     static_cast<unsigned>(esp_zb_get_current_channel()),
+                     esp_zb_get_short_address());
             ZbDevice::configureReporting();
+            s_zigbeeJoined.store(true, std::memory_order_relaxed);
             StatusLed::setState(StatusLed::State::Joined);
         }
         else
         {
-            ESP_LOGW(TAG, "Network steering failed — retrying");
-            esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
+            ESP_LOGW(TAG, "Network steering failed: %s (0x%x); retrying",
+                     esp_err_to_name(signal_struct->esp_err_status),
+                     static_cast<unsigned>(signal_struct->esp_err_status));
+            s_zigbeeJoined.store(false, std::memory_order_relaxed);
+            StatusLed::setState(StatusLed::State::Connecting);
+            esp_zb_scheduler_alarm(startNetworkSteering,
+                                   ESP_ZB_BDB_MODE_NETWORK_STEERING,
+                                   1000);
         }
         break;
 
     default:
+        ESP_LOGI(TAG, "Zigbee signal: %s (0x%x), status: %s",
+                 esp_zb_zdo_signal_to_string(sig),
+                 static_cast<unsigned>(sig),
+                 esp_err_to_name(signal_struct->esp_err_status));
         break;
     }
 }
@@ -253,6 +384,11 @@ static void wateringTask(void * /*arg*/)
     FaultCode lastLoggedFault = FaultCode::None;
     uint8_t lastReportedWatererState = 0xFFu;
     uint8_t lastReportedActiveZone = 0xFFu;
+    uint64_t lastReportedWaterTotalMl[ZONE_COUNT] = {};
+    for (uint8_t i = 0; i < ZONE_COUNT; ++i)
+    {
+        lastReportedWaterTotalMl[i] = UINT64_MAX;
+    }
     uint32_t lastWaterLevelReportMs = 0;
 
     for (;;)
@@ -359,6 +495,27 @@ static void wateringTask(void * /*arg*/)
         nowMs = pdTICKS_TO_MS(xTaskGetTickCount());
         s_fsm->tick(nowMs);
 
+        WateringDeliveryRecord delivery{};
+        while (s_fsm->takeDeliveryRecord(delivery))
+        {
+            if (s_waterUsage.addDelivery(delivery.zone, delivery.milliliters))
+            {
+                const uint64_t totalMl = s_waterUsage.getTotalMl(delivery.zone);
+                ESP_LOGI(TAG, "Zone %u dispensed %lu mL (lifetime %llu mL / %.3f L)",
+                         static_cast<unsigned>(delivery.zone),
+                         static_cast<unsigned long>(delivery.milliliters),
+                         static_cast<unsigned long long>(totalMl),
+                         static_cast<double>(s_waterUsage.getTotalLiters(delivery.zone)));
+                saveWaterUsageTotal(delivery.zone);
+                lastReportedWaterTotalMl[zoneIndex(delivery.zone)] = UINT64_MAX;
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Zone %u dispensed 0 mL",
+                         static_cast<unsigned>(delivery.zone));
+            }
+        }
+
         // Report zone status changes.
         for (uint8_t i = 0; i < ZONE_COUNT; ++i)
         {
@@ -413,6 +570,20 @@ static void wateringTask(void * /*arg*/)
             ZbDevice::reportActiveZone(activeZone);
         }
 
+        if (ZbDevice::reportsEnabled())
+        {
+            for (uint8_t i = 0; i < ZONE_COUNT; ++i)
+            {
+                const auto zoneId = static_cast<ZoneId>(i + 1u);
+                const uint64_t totalMl = s_waterUsage.getTotalMl(zoneId);
+                if (totalMl != lastReportedWaterTotalMl[i])
+                {
+                    lastReportedWaterTotalMl[i] = totalMl;
+                    ZbDevice::reportZoneWaterTotal(zoneId, totalMl);
+                }
+            }
+        }
+
         if (ZbDevice::reportsEnabled() &&
             (lastWaterLevelReportMs == 0 ||
              nowMs - lastWaterLevelReportMs >= config::renogy::POLL_INTERVAL_MS))
@@ -425,7 +596,7 @@ static void wateringTask(void * /*arg*/)
             ZbDevice::reportWaterLevel(water.percent);
         }
 
-        // Drive LED: fault > watering > joined (normal heartbeat).
+        // Drive LED: fault > watering > joined heartbeat > connecting blink.
         if (fault != FaultCode::None)
         {
             StatusLed::setState(StatusLed::State::Fault);
@@ -442,8 +613,18 @@ static void wateringTask(void * /*arg*/)
                 }
                 return false;
             }();
-            StatusLed::setState(anyActive ? StatusLed::State::Watering
-                                          : StatusLed::State::Joined);
+            if (anyActive)
+            {
+                StatusLed::setState(StatusLed::State::Watering);
+            }
+            else if (s_zigbeeJoined.load(std::memory_order_relaxed))
+            {
+                StatusLed::setState(StatusLed::State::Joined);
+            }
+            else
+            {
+                StatusLed::setState(StatusLed::State::Connecting);
+            }
         }
     }
 }
@@ -498,10 +679,16 @@ extern "C" void app_main(void)
         nvs_err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(nvs_err);
+    loadWaterUsageTotals();
+
+    esp_zb_platform_config_t zbPlatform = {};
+    zbPlatform.radio_config.radio_mode = ZB_RADIO_MODE_NATIVE;
+    zbPlatform.host_config.host_connection_mode = ZB_HOST_CONNECTION_MODE_NONE;
+    ESP_ERROR_CHECK(esp_zb_platform_config(&zbPlatform));
 
     // ── HAL init ──────────────────────────────────────────────────────────────
 
-    // Status LED — init early so it blinks Booting state while Zigbee joins.
+    // Status LED — init early so it blinks Connecting state while Zigbee joins.
     StatusLed::init();
 
     // LEDC timer — must be configured before any LedcPwm channel is used.

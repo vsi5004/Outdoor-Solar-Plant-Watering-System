@@ -285,6 +285,23 @@ static void test_watering_records_delivered_ml(void)
                              static_cast<float>(f.fsm.getDeliveredMl()));
 }
 
+static void test_watering_emits_delivery_record_on_completion(void)
+{
+    Fixture f;
+    f.sendRequest(ZoneId::Zone3, 5);
+    f.simulatePrime();
+    f.flow.pulses_ = 120;
+    f.advanceMs(5000u);
+
+    WateringDeliveryRecord record{};
+    TEST_ASSERT_TRUE(f.fsm.takeDeliveryRecord(record));
+    TEST_ASSERT_EQUAL(ZoneId::Zone3, record.zone);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f,
+                             120.0f * config::flow::ML_PER_PULSE,
+                             static_cast<float>(record.milliliters));
+    TEST_ASSERT_FALSE(f.fsm.takeDeliveryRecord(record));
+}
+
 // ── Watering fault paths ──────────────────────────────────────────────────────
 
 static void test_max_duration_causes_fault(void)
@@ -304,6 +321,32 @@ static void test_battery_drop_during_watering_causes_fault(void)
     f.renogy.data_.batterySoc = config::safety::MIN_BATTERY_SOC_PCT;
     f.fsm.tick(f.now);
     TEST_ASSERT_EQUAL(FaultCode::LowBattery, f.fsm.getLastFault());
+}
+
+static void test_fault_after_zone_open_emits_partial_delivery_record(void)
+{
+    Fixture f;
+    f.sendRequest(ZoneId::Zone2, 9999);
+    f.simulatePrime();
+    f.flow.pulses_ = 75;
+    f.advanceMs(config::pump::MAX_DISPENSE_MS);
+
+    WateringDeliveryRecord record{};
+    TEST_ASSERT_TRUE(f.fsm.takeDeliveryRecord(record));
+    TEST_ASSERT_EQUAL(ZoneId::Zone2, record.zone);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f,
+                             75.0f * config::flow::ML_PER_PULSE,
+                             static_cast<float>(record.milliliters));
+}
+
+static void test_precheck_fault_does_not_emit_delivery_record(void)
+{
+    Fixture f;
+    f.tank.percent_ = config::safety::MIN_WATER_LEVEL_PCT;
+    TEST_ASSERT_FALSE(f.sendRequest(ZoneId::Zone1, 10));
+
+    WateringDeliveryRecord record{};
+    TEST_ASSERT_FALSE(f.fsm.takeDeliveryRecord(record));
 }
 
 // ── cancel() ─────────────────────────────────────────────────────────────────
@@ -431,6 +474,22 @@ static void test_cancel_captures_delivered_ml(void)
                              static_cast<float>(f.fsm.getDeliveredMl()));
 }
 
+static void test_cancel_emits_delivery_record(void)
+{
+    Fixture f;
+    f.sendRequest(ZoneId::Zone5, 60);
+    f.simulatePrime();
+    f.flow.pulses_ = 50;
+    f.fsm.cancel();
+
+    WateringDeliveryRecord record{};
+    TEST_ASSERT_TRUE(f.fsm.takeDeliveryRecord(record));
+    TEST_ASSERT_EQUAL(ZoneId::Zone5, record.zone);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f,
+                             50.0f * config::flow::ML_PER_PULSE,
+                             static_cast<float>(record.milliliters));
+}
+
 static void test_new_request_accepted_after_cancel(void)
 {
     Fixture f;
@@ -496,8 +555,11 @@ void run_watering_fsm_tests(void)
     RUN_TEST(test_watering_stops_after_duration);
     RUN_TEST(test_watering_closes_zone_and_stops_pump_on_completion);
     RUN_TEST(test_watering_records_delivered_ml);
+    RUN_TEST(test_watering_emits_delivery_record_on_completion);
     RUN_TEST(test_max_duration_causes_fault);
     RUN_TEST(test_battery_drop_during_watering_causes_fault);
+    RUN_TEST(test_fault_after_zone_open_emits_partial_delivery_record);
+    RUN_TEST(test_precheck_fault_does_not_emit_delivery_record);
     RUN_TEST(test_cancel_during_priming_returns_to_idle);
     RUN_TEST(test_cancel_during_watering_returns_to_idle);
     RUN_TEST(test_cancel_stops_pump_and_closes_zones);
@@ -510,6 +572,7 @@ void run_watering_fsm_tests(void)
     RUN_TEST(test_cancel_in_idle_is_safe);
     RUN_TEST(test_cancel_in_fault_is_noop);
     RUN_TEST(test_cancel_captures_delivered_ml);
+    RUN_TEST(test_cancel_emits_delivery_record);
     RUN_TEST(test_new_request_accepted_after_cancel);
     RUN_TEST(test_clear_fault_returns_to_idle);
     RUN_TEST(test_clear_fault_from_idle_is_safe);

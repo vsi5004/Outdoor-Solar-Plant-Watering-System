@@ -145,7 +145,7 @@ namespace config::sensor {
 namespace config::renogy {
     constexpr uint32_t POLL_INTERVAL_MS      = 30'000;
     constexpr uint32_t RESPONSE_TIMEOUT_MS   = 500;
-    constexpr uint32_t LOAD_ENABLE_SETTLE_MS = 2'000;
+    constexpr uint32_t LOAD_ENABLE_SETTLE_MS = 4'500;
     constexpr uint32_t STALE_THRESHOLD_MS    = 3u * POLL_INTERVAL_MS;
 }
 
@@ -176,6 +176,7 @@ plant-waterer/
 |   |-- hal/                       # ESP-IDF GPIO, ADC, PCNT, UART, LEDC adapters
 |   |-- watering/
 |   |   |-- watering_fsm.*         # Safety state machine
+|   |   |-- water_usage_tracker.*  # Per-zone flow-meter total accumulator
 |   |   |-- zone_manager.*         # Zone mapping/open/close helpers
 |   |   |-- fault_code.hpp         # Stable HA/Z2M fault enum
 |   |   `-- zone_*.hpp             # Zone id/status/request value types
@@ -438,6 +439,8 @@ WateringRequest req_;
 uint32_t        phaseStartMs_;
 uint32_t        targetDurationMs_;
 uint32_t        deliveredMl_;
+bool            hasPendingDelivery_;
+WateringDeliveryRecord pendingDelivery_;
 FaultCode       fault_;
 ```
 
@@ -472,7 +475,7 @@ struct WateringRequest {
 - Stop normally when `targetDurationMs_` expires
 - Raise `FaultCode::MaxDuration` if `MAX_DISPENSE_MS` is reached first
 - Re-check Renogy freshness and battery SOC while running
-- Record delivered milliliters from the flow meter on completion, cancel, or fault
+- Record delivered milliliters from the flow meter on completion, cancel, or fault, and expose a one-shot `WateringDeliveryRecord` for `wateringTask` to accumulate
 - Active shutdown is sequenced in reverse startup order: pump off, wait
   `PUMP_STOP_TO_SOLENOID_CLOSE_MS`, close all solenoids, wait
   `SOLENOID_CLOSE_TO_LOAD_DISABLE_MS`, then disable the Renogy load output
@@ -567,7 +570,7 @@ void app_main(void) {
 
 | Firmware state | LED behavior |
 |---|---|
-| Booting / joining | Slow amber pulse |
+| Booting / joining | Slow blue blink |
 | Joined / idle | Brief green heartbeat every 5 seconds |
 | Watering | Solid cyan |
 | Fault | Rapid red blink |
@@ -585,19 +588,19 @@ zone's stored duration. An `Off` command cancels active watering and clears any
 latched fault, which is how the HA `Clear fault` button works.
 
 Firmware runs the cycle and self-terminates. HA receives live zone state,
-fault state, battery data, solar telemetry, charging status, and water level via
-Zigbee attribute reports.
+per-zone lifetime water totals, fault state, battery data, solar telemetry,
+charging status, and water level via Zigbee attribute reports.
 
 ### Endpoint Layout
 
 | EP | Cluster | Role | Content |
 |---|---|---|---|
 | 1 | Basic + Identify | Server | Mandatory Zigbee device descriptors |
-| 10 | On/Off + Analog Output | Server | Zone 1 active state plus writable duration in seconds |
-| 11 | On/Off + Analog Output | Server | Zone 2 active state plus writable duration in seconds |
-| 12 | On/Off + Analog Output | Server | Zone 3 active state plus writable duration in seconds |
-| 13 | On/Off + Analog Output | Server | Zone 4 active state plus writable duration in seconds |
-| 14 | On/Off + Analog Output | Server | Zone 5 active state plus writable duration in seconds |
+| 10 | On/Off + Analog Output | Server | Zone 1 active state and writable duration in seconds |
+| 11 | On/Off + Analog Output | Server | Zone 2 active state and writable duration in seconds |
+| 12 | On/Off + Analog Output | Server | Zone 3 active state and writable duration in seconds |
+| 13 | On/Off + Analog Output | Server | Zone 4 active state and writable duration in seconds |
+| 14 | On/Off + Analog Output | Server | Zone 5 active state and writable duration in seconds |
 | 20 | Power Configuration + Analog Input | Server | `BatteryPercentageRemaining` (SOC × 2), `BatteryVoltage` (V × 10), active zone as float (`0.0`=none, `1.0`-`5.0`=zone number) |
 | 21 | Analog Input | Server | Max charging power today (W) |
 | 22 | Analog Input | Server | Daily solar generation (Wh) |
@@ -607,6 +610,11 @@ Zigbee attribute reports.
 | 26 | Analog Input | Server | PV power (W) |
 | 27 | Analog Input | Server | Controller temperature (deg C) |
 | 28 | Analog Input | Server | Reservoir water level (%) |
+| 31 | Analog Input | Server | Zone 1 lifetime water total (L) |
+| 32 | Analog Input | Server | Zone 2 lifetime water total (L) |
+| 33 | Analog Input | Server | Zone 3 lifetime water total (L) |
+| 34 | Analog Input | Server | Zone 4 lifetime water total (L) |
+| 35 | Analog Input | Server | Zone 5 lifetime water total (L) |
 | 41 | Analog Input | Server | `FaultCode` as float (`0.0` = None) |
 | 42 | Analog Input | Server | Charging status as float (`0.0`=not started ... `5.0`=float ... `6.0`=current limiting) |
 | 43 | On/Off + Analog Input | Server | Momentary clear-fault command plus waterer state as float (`0.0`=idle, `1.0`=priming, `2.0`=watering, `3.0`=fault) |
@@ -614,7 +622,8 @@ Zigbee attribute reports.
 All Renogy data comes from the background `renogyTask` polling at 30s intervals.
 Zone on/off states are pushed from `wateringTask` on every state change.
 `waterer_state` and `active_zone` are also pushed from `wateringTask` whenever
-the aggregate controller state changes.
+the aggregate controller state changes. Zone water totals are pushed at join
+after the reporting grace period and after each non-zero delivery.
 
 ### Status Enum
 
@@ -662,6 +671,7 @@ logs.
 
 ```cpp
 void ZbDevice::reportZoneStatus(ZoneId zone, ZoneStatus status);
+void ZbDevice::reportZoneWaterTotal(ZoneId zone, uint64_t totalMilliliters);
 void ZbDevice::reportBattery(uint8_t socPct, float voltageV);
 void ZbDevice::reportSolarData(float batteryVoltageV,
                                float pvVoltageV,
@@ -777,6 +787,11 @@ Analog Input reports are decoded by source endpoint:
 
 | EP | Z2M property |
 |---|---|
+| 31 | `zone_1_total_water` |
+| 32 | `zone_2_total_water` |
+| 33 | `zone_3_total_water` |
+| 34 | `zone_4_total_water` |
+| 35 | `zone_5_total_water` |
 | 20 | `active_zone` |
 | 21 | `max_charging_power_today` |
 | 22 | `daily_solar_generation` |
@@ -820,6 +835,12 @@ handler sends `genOnOff.on` to endpoint 43. The firmware handles that as an
 explicit clear-fault command and resets endpoint 43 back to Off, so repeated
 button presses always create a new On transition.
 
+Water totals are exposed on separate Analog Input endpoints instead of the zone
+control endpoints. The converter maps EP31-35 to `zone_N_total_water`, reports
+the values in liters, and overrides Home Assistant discovery with
+`device_class: water` and `state_class: total_increasing` so HA can derive daily
+usage with `utility_meter`.
+
 Home Assistant discovery names for the power and energy sensors are overridden
 in `overrideHaDiscoveryPayload` so HA displays `PV power`, `Max charging power
 today`, `Daily solar generation`, and `Daily power consumption` instead of
@@ -841,6 +862,7 @@ will use the IEEE address in the generated entity IDs.
 | `switch.zone_1` ... `switch.zone_5` | Manual watering controls |
 | `number.duration_zone_1` ... `number.duration_zone_5` | Duration used by the next On command for each zone |
 | `button.clear_fault` | Acknowledge and clear a latched fault |
+| `sensor.zone_1_total_water` ... `sensor.zone_5_total_water` | Per-zone lifetime water total (L) |
 | `sensor.battery` | Renogy battery SOC (%) |
 | `sensor.battery_voltage` | Renogy battery voltage (V) |
 | `sensor.pv_voltage` | Solar input voltage (V) |
@@ -893,6 +915,27 @@ target:
   entity_id: number.0x1051dbfffe0d375c_duration_zone_1
 data:
   value: 45
+```
+
+### Daily Water Usage
+
+The FSM records the flow-meter total for every accepted cycle when it completes,
+is cancelled, or faults after opening a zone. Precheck faults do not create a
+delivery record because no zone owned the pump/valve path yet.
+
+`wateringTask` adds each non-zero delivery to `WaterUsageTracker`, stores the
+per-zone milliliter total in the `water_usage` NVS namespace, and reports the
+new lifetime total through the zone endpoint's Analog Input cluster as liters.
+NVS is written once per completed delivery, not per pulse.
+
+The firmware does not perform daily resets. Home Assistant should derive daily
+usage from the monotonic total sensors:
+
+```yaml
+utility_meter:
+  plant_waterer_zone_1_daily_water:
+    source: sensor.0x1051dbfffe0d375c_zone_1_total_water
+    cycle: daily
 ```
 
 ### Emergency Stop All
@@ -957,10 +1000,11 @@ Fault clear requested via Zone 1 OFF: water_low (2)
 Zone 1 status: idle -> priming
 Zone 1 status: priming -> running
 Zone 1 status: running -> idle
+Zone 1 dispensed 71 mL (lifetime 1042 mL / 1.042 L)
 Stopping pump
 Waiting 100 ms before closing solenoid
 Closing all solenoids
-Waiting 2000 ms before disabling Renogy load
+Waiting 4500 ms before disabling Renogy load
 Disabling Renogy load
 Waterer state: priming
 Active zone: 1
@@ -1000,5 +1044,5 @@ Work in this order so each layer is testable before the next:
 - **LiFePO4 cutoff**: The Renogy Wanderer handles hardware cutoff, but firmware must also gate watering below `MIN_BATTERY_SOC_PCT` to avoid deep discharge during high-load events
 - **Zigbee and RS232 coexistence**: Keep RS232 wiring away from the C6 antenna area
 - **Conformal coating**: Apply to all driver boards — water and electronics are in close proximity
-- **NVS storage**: Consider storing per-zone total ml dispensed (lifetime) and last-run timestamp in NVS for persistence across reboots and reporting to HA
+- **NVS storage**: Per-zone lifetime water totals are stored in the `water_usage` namespace as milliliters and reported to HA as total-increasing liter sensors
 - **OTA**: ESP-IDF supports OTA updates over WiFi — not applicable here (no WiFi), but Zigbee OTA cluster (cluster 0x0019) is available if desired for future field updates

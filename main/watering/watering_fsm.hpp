@@ -9,6 +9,14 @@
 #include "drivers/ifloat_sensor.hpp"
 #include "drivers/irenogy_monitor.hpp"
 
+// Delivery event emitted by the FSM when a zone-owning cycle ends (completion,
+// cancel, or fault after zone open). Precheck faults produce no record because
+// no zone owned the pump/valve path.
+struct WateringDeliveryRecord {
+    ZoneId   zone;
+    uint32_t milliliters;
+};
+
 // Finite state machine for a single-zone watering cycle.
 //
 // States:
@@ -45,6 +53,10 @@ public:
     // Volume delivered (ml) in the most recently completed or aborted cycle.
     uint32_t getDeliveredMl() const;
 
+    // Pull one completed/aborted delivery record from the FSM.
+    // Returns false when no accepted cycle has ended since the last call.
+    bool takeDeliveryRecord(WateringDeliveryRecord& record);
+
     // Transition Fault → Idle. No-op in any other state.
     void clearFault();
 
@@ -57,6 +69,7 @@ private:
 
     void stopAll();
     void stopOutputs(bool useShutdownDelays, bool logSteps);
+    void captureDelivery();
     void enterFault(FaultCode code);
 
     IZoneManager&   zones_;
@@ -72,4 +85,6 @@ private:
     uint32_t        targetDurationMs_ = 0;
     uint32_t        deliveredMl_      = 0;
     bool            zoneOwned_        = false;
+    bool            hasPendingDelivery_ = false;
+    WateringDeliveryRecord pendingDelivery_ = {};
 };

@@ -13,6 +13,7 @@ idf_component_register(
         "test_renogy.cpp"
         "test_zone_manager.cpp"
         "test_watering_fsm.cpp"
+        "test_water_usage_tracker.cpp"
 
         # Driver sources under test (no hardware calls — injected via mocks)
         "../../../main/drivers/solenoid_actuator.cpp"
@@ -22,6 +23,7 @@ idf_component_register(
         "../../../main/drivers/renogy_driver.cpp"
         "../../../main/watering/zone_manager.cpp"
         "../../../main/watering/watering_fsm.cpp"
+        "../../../main/watering/water_usage_tracker.cpp"
 
     INCLUDE_DIRS
         "."

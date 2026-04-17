@@ -4,7 +4,16 @@ import * as m from 'zigbee-herdsman-converters/lib/modernExtend';
 const e = exposes.presets;
 const ea = exposes.access;
 
+const waterTotalByEndpoint = {
+    31: 'zone_1_total_water',
+    32: 'zone_2_total_water',
+    33: 'zone_3_total_water',
+    34: 'zone_4_total_water',
+    35: 'zone_5_total_water',
+};
+
 const analogInputByEndpoint = {
+    ...waterTotalByEndpoint,
     20: 'active_zone',
     21: 'max_charging_power_today',
     22: 'daily_solar_generation',
@@ -84,6 +93,14 @@ const haNamesByObjectSuffix = {
     max_charging_power_today: 'Max charging power today',
     daily_solar_generation: 'Daily solar generation',
     daily_power_consumption: 'Daily power consumption',
+};
+
+const waterTotalHaNamesByObjectSuffix = {
+    zone_1_total_water: 'Zone 1 total water',
+    zone_2_total_water: 'Zone 2 total water',
+    zone_3_total_water: 'Zone 3 total water',
+    zone_4_total_water: 'Zone 4 total water',
+    zone_5_total_water: 'Zone 5 total water',
 };
 
 function lookupEnumValue(map, value) {
@@ -239,6 +256,16 @@ export default {
         e.enum('active_zone', ea.STATE, [...Object.values(activeZones), 'unknown'])
             .withLabel('Active zone')
             .withDescription('Zone currently owned by the watering state machine'),
+        e.numeric('zone_1_total_water', ea.STATE).withLabel('Zone 1 total water').withUnit('L')
+            .withDescription('Lifetime water dispensed by zone 1'),
+        e.numeric('zone_2_total_water', ea.STATE).withLabel('Zone 2 total water').withUnit('L')
+            .withDescription('Lifetime water dispensed by zone 2'),
+        e.numeric('zone_3_total_water', ea.STATE).withLabel('Zone 3 total water').withUnit('L')
+            .withDescription('Lifetime water dispensed by zone 3'),
+        e.numeric('zone_4_total_water', ea.STATE).withLabel('Zone 4 total water').withUnit('L')
+            .withDescription('Lifetime water dispensed by zone 4'),
+        e.numeric('zone_5_total_water', ea.STATE).withLabel('Zone 5 total water').withUnit('L')
+            .withDescription('Lifetime water dispensed by zone 5'),
         e.numeric('duration_zone_1', ea.ALL).withLabel('Zone 1 duration').withUnit('s')
             .withValueMin(durationMinSec).withValueMax(durationMaxSec).withValueStep(1),
         e.numeric('duration_zone_2', ea.ALL).withLabel('Zone 2 duration').withUnit('s')
@@ -256,6 +283,16 @@ export default {
     meta: {
         multiEndpoint: true,
         overrideHaDiscoveryPayload: (payload) => {
+            for (const [suffix, name] of Object.entries(waterTotalHaNamesByObjectSuffix)) {
+                if (payload.object_id?.endsWith(`_${suffix}`)) {
+                    payload.name = name;
+                    payload.device_class = 'water';
+                    payload.state_class = 'total_increasing';
+                    payload.unit_of_measurement = 'L';
+                    return;
+                }
+            }
+
             for (const [suffix, name] of Object.entries(haNamesByObjectSuffix)) {
                 if (payload.object_id?.endsWith(`_${suffix}`)) {
                     payload.name = name;

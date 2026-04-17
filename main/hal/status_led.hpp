@@ -4,7 +4,7 @@
 // Single WS2812 status LED driven by the RMT peripheral.
 //
 // States (set atomically from any task):
-//   Booting  - slow amber pulse while waiting for Zigbee join
+//   Connecting - slow blue blink while steering/joining Zigbee
 //   Joined   - brief green flash every 5 s (heartbeat)
 //   Watering - solid cyan while a zone is active
 //   Fault    - rapid red blink
@@ -13,7 +13,7 @@
 class StatusLed {
 public:
     enum class State : uint8_t {
-        Booting,
+        Connecting,
         Joined,
         Watering,
         Fault,

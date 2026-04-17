@@ -9,7 +9,7 @@ static constexpr int     LED_GPIO      = 8;
 static constexpr uint8_t LED_INTENSITY = 20; // 0-255, keep low indoors
 
 static led_strip_handle_t     s_strip  = nullptr;
-static std::atomic<StatusLed::State> s_state{StatusLed::State::Booting};
+static std::atomic<StatusLed::State> s_state{StatusLed::State::Connecting};
 
 void StatusLed::init()
 {
@@ -56,10 +56,10 @@ void StatusLed::runTask(void* /*arg*/)
 
         switch (s_state.load(std::memory_order_relaxed)) {
 
-        case State::Booting:
-            // Amber pulse: on 200 ms, off 800 ms (2 ticks on, 8 ticks off)
+        case State::Connecting:
+            // Blue blink: on 200 ms, off 800 ms (2 ticks on, 8 ticks off).
             if ((tick % 10) < 2) {
-                setPixel(LED_INTENSITY, LED_INTENSITY / 3, 0);
+                setPixel(0, 0, LED_INTENSITY);
             } else {
                 off();
             }

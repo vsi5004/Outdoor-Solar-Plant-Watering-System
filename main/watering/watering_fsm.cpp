@@ -141,7 +141,7 @@ void WateringFsm::tick(uint32_t nowMs)
         }
         if (elapsed >= targetDurationMs_)
         {
-            deliveredMl_ = static_cast<uint32_t>(flow_.getMilliliters() + 0.5f);
+            captureDelivery();
             stopAll();
             zoneOwned_ = false;
             state_ = State::Idle;
@@ -192,6 +192,18 @@ ZoneStatus WateringFsm::getZoneStatus(ZoneId id) const
 FaultCode WateringFsm::getLastFault() const { return fault_; }
 uint32_t WateringFsm::getDeliveredMl() const { return deliveredMl_; }
 
+bool WateringFsm::takeDeliveryRecord(WateringDeliveryRecord &record)
+{
+    if (!hasPendingDelivery_)
+    {
+        return false;
+    }
+
+    record = pendingDelivery_;
+    hasPendingDelivery_ = false;
+    return true;
+}
+
 void WateringFsm::clearFault()
 {
     if (state_ == State::Fault)
@@ -206,7 +218,7 @@ void WateringFsm::cancel()
 {
     if (state_ == State::Priming || state_ == State::Watering)
     {
-        deliveredMl_ = static_cast<uint32_t>(flow_.getMilliliters() + 0.5f);
+        captureDelivery();
         stopAll();
         zoneOwned_ = false;
         state_ = State::Idle;
@@ -261,9 +273,27 @@ void WateringFsm::stopOutputs(bool useShutdownDelays, bool logSteps)
     renogy_.setLoad(false);
 }
 
+void WateringFsm::captureDelivery()
+{
+    const bool acceptedCycle =
+        zoneOwned_ || state_ == State::Priming || state_ == State::Watering;
+    if (!acceptedCycle)
+    {
+        deliveredMl_ = 0u;
+        return;
+    }
+
+    deliveredMl_ = static_cast<uint32_t>(flow_.getMilliliters() + 0.5f);
+    if (zoneOwned_ && isValidZoneId(req_.zone))
+    {
+        pendingDelivery_ = {req_.zone, deliveredMl_};
+        hasPendingDelivery_ = true;
+    }
+}
+
 void WateringFsm::enterFault(FaultCode code)
 {
-    deliveredMl_ = static_cast<uint32_t>(flow_.getMilliliters() + 0.5f);
+    captureDelivery();
     const bool outputsMayBeActive =
         zoneOwned_ || state_ == State::Priming || state_ == State::Watering;
     stopOutputs(outputsMayBeActive, outputsMayBeActive);

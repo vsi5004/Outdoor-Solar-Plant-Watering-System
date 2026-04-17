@@ -84,7 +84,7 @@ namespace config
         // rises later than the Modbus acknowledgement, include that extra lag
         // in this value. This also accounts for the time it takes to charge the
         // motor driver's bulk capacitor before it can provide full current to the solenoid.
-        constexpr uint32_t LOAD_ENABLE_SETTLE_MS = 3'500;
+        constexpr uint32_t LOAD_ENABLE_SETTLE_MS = 4'500;
         // Data older than this triggers FaultCode::StaleData. 3× poll interval
         // gives two missed polls before a watering cycle is blocked.
         constexpr uint32_t STALE_THRESHOLD_MS = 3u * POLL_INTERVAL_MS; // 90 s

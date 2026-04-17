@@ -139,6 +139,7 @@ void ZbDevice::init()
     buildZoneEps(ep_list);
     buildBatteryEp(ep_list);
     buildSolarDataEps(ep_list);
+    buildZoneWaterTotalEps(ep_list);
     buildFaultEp(ep_list);
     buildChargingStatusEp(ep_list);
     buildClearFaultEp(ep_list);
@@ -146,7 +147,7 @@ void ZbDevice::init()
 
     esp_zb_core_action_handler_register(ZbHandlers::onAction);
 
-    ESP_LOGI(TAG, "Registered EP1, EP10-14, EP20-28, EP41-43");
+    ESP_LOGI(TAG, "Registered EP1, EP10-14, EP20-28, EP31-35, EP41-43");
 }
 
 void ZbDevice::configureReporting()
@@ -168,6 +169,9 @@ void ZbDevice::configureReporting()
     registerAnalogPresentValueReporting(kPvPowerEp);
     registerAnalogPresentValueReporting(kControllerTempEp);
     registerAnalogPresentValueReporting(kWaterLevelEp);
+    for (uint8_t i = ZONE_ID_MIN; i <= ZONE_ID_MAX; ++i) {
+        registerAnalogPresentValueReporting(static_cast<uint8_t>(kZoneWaterTotalEpBase + i));
+    }
     registerAnalogPresentValueReporting(kFaultEp);
     registerAnalogPresentValueReporting(kChargingStatusEp);
     registerAnalogPresentValueReporting(kWatererStateEp);
@@ -194,6 +198,11 @@ void ZbDevice::reportZoneStatus(ZoneId zone, ZoneStatus status)
         ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
         ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
     esp_zb_lock_release();
+}
+
+void ZbDevice::reportZoneWaterTotal(ZoneId zone, uint64_t totalMilliliters)
+{
+    reportAnalogPresentValue(zoneWaterTotalEp(zone), static_cast<float>(totalMilliliters) / 1000.0f);
 }
 
 void ZbDevice::reportBattery(uint8_t socPct, float voltageV)
@@ -487,6 +496,32 @@ void ZbDevice::buildSolarDataEps(esp_zb_ep_list_t* ep_list)
     };
 
     for (uint8_t ep : eps) {
+        esp_zb_analog_input_cluster_cfg_t ai_cfg = {
+            .out_of_service = 0,
+            .present_value  = 0.0f,
+            .status_flags   = 0,
+        };
+
+        esp_zb_cluster_list_t* cl = esp_zb_zcl_cluster_list_create();
+        esp_zb_cluster_list_add_analog_input_cluster(cl,
+            esp_zb_analog_input_cluster_create(&ai_cfg),
+            ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+        esp_zb_endpoint_config_t ep_cfg = {
+            .endpoint           = ep,
+            .app_profile_id     = ESP_ZB_AF_HA_PROFILE_ID,
+            .app_device_id      = ESP_ZB_HA_SIMPLE_SENSOR_DEVICE_ID,
+            .app_device_version = 0,
+        };
+        esp_zb_ep_list_add_ep(ep_list, cl, ep_cfg);
+    }
+}
+
+void ZbDevice::buildZoneWaterTotalEps(esp_zb_ep_list_t* ep_list)
+{
+    for (uint8_t i = ZONE_ID_MIN; i <= ZONE_ID_MAX; ++i) {
+        const uint8_t ep = static_cast<uint8_t>(kZoneWaterTotalEpBase + i);
+
         esp_zb_analog_input_cluster_cfg_t ai_cfg = {
             .out_of_service = 0,
             .present_value  = 0.0f,

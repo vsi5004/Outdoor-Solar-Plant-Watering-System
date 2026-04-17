@@ -9,7 +9,7 @@
 //
 // Endpoint map
 //   EP  1        Basic + Identify clusters (mandatory Zigbee device)
-//   EP 10–14     On/Off cluster, one per zone (Zone1 → EP10 … Zone5 → EP14)
+//   EP 10–14     On/Off + Analog Output, one per zone
 //   EP 20        Power Configuration cluster (battery SOC + voltage from Renogy)
 //   EP 21        Analog Input — max charging power today (W)
 //   EP 22        Analog Input — daily solar generation (Wh)
@@ -19,6 +19,7 @@
 //   EP 26        Analog Input — PV power (W)
 //   EP 27        Analog Input — controller temperature (deg C)
 //   EP 28        Analog Input — reservoir water level (%)
+//   EP 31–35     Analog Input — Zone 1–5 lifetime water total (L)
 //   EP 41        Analog Input cluster (FaultCode float 0.0–7.0)
 //   EP 42        Analog Input cluster (charging status float 0.0–6.0)
 //   EP 43        On/Off clear-fault command + Analog Input waterer state
@@ -48,6 +49,9 @@ public:
     // Push the on/off state for a zone endpoint (EP 10–14).
     // Zone is Running or Priming → on; Idle or Fault → off.
     static void reportZoneStatus(ZoneId zone, ZoneStatus status);
+
+    // Push lifetime water delivered to a zone as liters via Analog Input.
+    static void reportZoneWaterTotal(ZoneId zone, uint64_t totalMilliliters);
 
     // Push battery SOC (0-100 %) and voltage (V) to local Power Config attrs.
     // SOC is reportable through Power Config; voltage is also reported via EP24.
@@ -100,6 +104,7 @@ public:
     static constexpr uint8_t kPvPowerEp        = 26u;
     static constexpr uint8_t kControllerTempEp = 27u;
     static constexpr uint8_t kWaterLevelEp     = 28u;
+    static constexpr uint8_t kZoneWaterTotalEpBase = 30u; // Zone1 → EP31 … Zone5 → EP35
     static constexpr uint8_t kFaultEp          = 41u;
     static constexpr uint8_t kChargingStatusEp = 42u;
     static constexpr uint8_t kClearFaultEp     = 43u;
@@ -111,7 +116,13 @@ private:
     static void buildZoneEps(esp_zb_ep_list_t* ep_list);
     static void buildBatteryEp(esp_zb_ep_list_t* ep_list);
     static void buildSolarDataEps(esp_zb_ep_list_t* ep_list);
+    static void buildZoneWaterTotalEps(esp_zb_ep_list_t* ep_list);
     static void buildFaultEp(esp_zb_ep_list_t* ep_list);
     static void buildChargingStatusEp(esp_zb_ep_list_t* ep_list);
     static void buildClearFaultEp(esp_zb_ep_list_t* ep_list);
+
+    static constexpr uint8_t zoneWaterTotalEp(ZoneId z)
+    {
+        return static_cast<uint8_t>(kZoneWaterTotalEpBase + static_cast<uint8_t>(z));
+    }
 };

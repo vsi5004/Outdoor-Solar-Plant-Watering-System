@@ -12,6 +12,7 @@ void run_float_sensor_tests();
 void run_renogy_tests();
 void run_zone_manager_tests();
 void run_watering_fsm_tests();
+void run_water_usage_tracker_tests();
 
 extern "C" void app_main(void)
 {
@@ -26,6 +27,7 @@ extern "C" void app_main(void)
     run_renogy_tests();
     run_zone_manager_tests();
     run_watering_fsm_tests();
+    run_water_usage_tracker_tests();
 
     // exit() terminates the FreeRTOS Linux scheduler threads so the process
     // actually exits.  Without this, vTaskStartScheduler() never returns and
