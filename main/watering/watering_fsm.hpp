@@ -56,6 +56,7 @@ private:
     enum class State : uint8_t { Idle, Priming, Watering, Fault };
 
     void stopAll();
+    void stopOutputs(bool useShutdownDelays, bool logSteps);
     void enterFault(FaultCode code);
 
     IZoneManager&   zones_;

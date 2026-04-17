@@ -18,6 +18,7 @@ struct Fixture {
     MockRenogyMonitor renogy;
     WateringFsm       fsm{zones, pump, flow, tank, renogy};
     uint32_t          now = 0;
+    int               sequence = 0;
 
     static WateringRequest req(ZoneId z = ZoneId::Zone1, uint32_t sec = 60)
     {
@@ -39,6 +40,13 @@ struct Fixture {
     {
         flow.pulses_ = static_cast<int32_t>(config::pump::PRIME_PULSE_COUNT);
         fsm.tick(now);
+    }
+
+    void recordOutputOrder()
+    {
+        pump.attachSequence(sequence);
+        zones.attachSequence(sequence);
+        renogy.attachSequence(sequence);
     }
 };
 
@@ -355,6 +363,41 @@ static void test_watering_completion_disables_renogy_load(void)
     TEST_ASSERT_FALSE(f.renogy.lastLoadState_);
 }
 
+static void test_watering_completion_shutdown_order_is_pump_solenoid_load(void)
+{
+    Fixture f;
+    f.recordOutputOrder();
+    f.sendRequest(ZoneId::Zone1, 5);
+    f.simulatePrime();
+    f.advanceMs(5000u);
+    TEST_ASSERT_TRUE(f.pump.stopOrder_ > 0);
+    TEST_ASSERT_TRUE(f.zones.closeAllOrder_ > f.pump.stopOrder_);
+    TEST_ASSERT_TRUE(f.renogy.loadOffOrder_ > f.zones.closeAllOrder_);
+}
+
+static void test_cancel_shutdown_order_is_pump_solenoid_load(void)
+{
+    Fixture f;
+    f.recordOutputOrder();
+    f.sendRequest();
+    f.simulatePrime();
+    f.fsm.cancel();
+    TEST_ASSERT_TRUE(f.pump.stopOrder_ > 0);
+    TEST_ASSERT_TRUE(f.zones.closeAllOrder_ > f.pump.stopOrder_);
+    TEST_ASSERT_TRUE(f.renogy.loadOffOrder_ > f.zones.closeAllOrder_);
+}
+
+static void test_fault_shutdown_order_is_pump_solenoid_load(void)
+{
+    Fixture f;
+    f.recordOutputOrder();
+    f.sendRequest();
+    f.advanceMs(config::pump::PRIME_TIMEOUT_MS);
+    TEST_ASSERT_TRUE(f.pump.stopOrder_ > 0);
+    TEST_ASSERT_TRUE(f.zones.closeAllOrder_ > f.pump.stopOrder_);
+    TEST_ASSERT_TRUE(f.renogy.loadOffOrder_ > f.zones.closeAllOrder_);
+}
+
 static void test_cancel_in_idle_is_safe(void)
 {
     Fixture f;
@@ -461,6 +504,9 @@ void run_watering_fsm_tests(void)
     RUN_TEST(test_cancel_disables_renogy_load);
     RUN_TEST(test_fault_disables_renogy_load);
     RUN_TEST(test_watering_completion_disables_renogy_load);
+    RUN_TEST(test_watering_completion_shutdown_order_is_pump_solenoid_load);
+    RUN_TEST(test_cancel_shutdown_order_is_pump_solenoid_load);
+    RUN_TEST(test_fault_shutdown_order_is_pump_solenoid_load);
     RUN_TEST(test_cancel_in_idle_is_safe);
     RUN_TEST(test_cancel_in_fault_is_noop);
     RUN_TEST(test_cancel_captures_delivered_ml);

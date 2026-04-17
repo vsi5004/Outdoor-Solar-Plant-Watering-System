@@ -58,7 +58,7 @@ namespace config
         constexpr int SOL3_CH = 4; // LEDC_CHANNEL_4 — solenoid 3 LPWM
         constexpr int SOL4_CH = 5; // LEDC_CHANNEL_5 — solenoid 4 RPWM
 
-        constexpr uint32_t FREQUENCY_HZ = 25'000; // above audible range; coil whine inaudible
+        constexpr uint32_t FREQUENCY_HZ = 22'000; // above audible range; coil whine inaudible
         constexpr uint32_t RESOLUTION_BITS = 10;  // duty range: 0–1023
     } // namespace ledc
 
@@ -82,8 +82,9 @@ namespace config
         // Time between Renogy acknowledging setLoad(true) and energizing the
         // first downstream actuator. If the controller's physical load output
         // rises later than the Modbus acknowledgement, include that extra lag
-        // in this value.
-        constexpr uint32_t LOAD_ENABLE_SETTLE_MS = 2'000;
+        // in this value. This also accounts for the time it takes to charge the
+        // motor driver's bulk capacitor before it can provide full current to the solenoid.
+        constexpr uint32_t LOAD_ENABLE_SETTLE_MS = 3'500;
         // Data older than this triggers FaultCode::StaleData. 3× poll interval
         // gives two missed polls before a watering cycle is blocked.
         constexpr uint32_t STALE_THRESHOLD_MS = 3u * POLL_INTERVAL_MS; // 90 s
@@ -120,6 +121,15 @@ namespace config
         // Hard cap on watering duration regardless of HA command.
         constexpr uint32_t MAX_DISPENSE_MS = 30u * 60u * 1'000u; // 30 minutes
     } // namespace pump
+
+    // Watering output sequencing.
+    namespace watering_sequence
+    {
+        // Graceful shutdown mirrors startup in reverse:
+        // pump off -> wait -> solenoid close -> wait -> Renogy load off.
+        constexpr uint32_t PUMP_STOP_TO_SOLENOID_CLOSE_MS = solenoid::PULL_IN_MS;
+        constexpr uint32_t SOLENOID_CLOSE_TO_LOAD_DISABLE_MS = renogy::LOAD_ENABLE_SETTLE_MS;
+    } // namespace watering_sequence
 
     // ── Zigbee device identity (read by Z2M during interview) ────────────────────
     namespace zigbee
@@ -187,6 +197,12 @@ static_assert(config::solenoid::PULL_IN_MS > 0,
 
 static_assert(config::renogy::LOAD_ENABLE_SETTLE_MS > 0,
               "LOAD_ENABLE_SETTLE_MS must be positive");
+
+static_assert(config::watering_sequence::PUMP_STOP_TO_SOLENOID_CLOSE_MS > 0,
+              "PUMP_STOP_TO_SOLENOID_CLOSE_MS must be positive");
+
+static_assert(config::watering_sequence::SOLENOID_CLOSE_TO_LOAD_DISABLE_MS > 0,
+              "SOLENOID_CLOSE_TO_LOAD_DISABLE_MS must be positive");
 
 static_assert(config::pump::PRIME_PULSE_COUNT > 0,
               "PRIME_PULSE_COUNT must be positive");

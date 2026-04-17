@@ -365,6 +365,11 @@ Fault clear requested via Zone 1 OFF: water_low (2)
 Zone 1 status: idle -> priming
 Zone 1 status: priming -> running
 Zone 1 status: running -> idle
+Stopping pump
+Waiting 100 ms before closing solenoid
+Closing all solenoids
+Waiting 2000 ms before disabling Renogy load
+Disabling Renogy load
 Waterer state: priming
 Active zone: 1
 Waterer state: idle
@@ -401,8 +406,12 @@ Hard constraints enforced in firmware regardless of HA state:
 
 - **Never dead-head the pump** — a solenoid must be open before the pump starts.
   The FSM guarantees this by waiting one `config::solenoid::PULL_IN_MS` interval after `setLoad(true)`, then waiting for `zones_.open(...)` to finish the solenoid pull-in interval before starting the pump.
-- **Emergency stop** — pulling `DRV_MASTER_EN_PIN` LOW cuts all three BTS7960
-  boards instantly. The FSM does this first on any fault transition.
+- **Ordered shutdown** — active watering stops in reverse order: pump off,
+  wait `PUMP_STOP_TO_SOLENOID_CLOSE_MS`, close solenoids, wait
+  `SOLENOID_CLOSE_TO_LOAD_DISABLE_MS`, then disable the Renogy load output.
+- **Hardware cutoff** — pulling `DRV_MASTER_EN_PIN` LOW cuts all three BTS7960
+  boards instantly. Normal firmware faults use the ordered shutdown sequence so
+  the pump stops before the valve closes and the Renogy load turns off last.
 - **Battery gate** — watering is blocked below `MIN_BATTERY_SOC_PCT` (15%) to
   prevent deep discharge of the LiFePO4 battery.
 - **Water level gate** — watering is blocked at or below `MIN_WATER_LEVEL_PCT` (5%).

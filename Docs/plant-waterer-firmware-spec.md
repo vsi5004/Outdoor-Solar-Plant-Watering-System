@@ -148,6 +148,13 @@ namespace config::renogy {
     constexpr uint32_t LOAD_ENABLE_SETTLE_MS = 2'000;
     constexpr uint32_t STALE_THRESHOLD_MS    = 3u * POLL_INTERVAL_MS;
 }
+
+namespace config::watering_sequence {
+    constexpr uint32_t PUMP_STOP_TO_SOLENOID_CLOSE_MS =
+        config::solenoid::PULL_IN_MS;
+    constexpr uint32_t SOLENOID_CLOSE_TO_LOAD_DISABLE_MS =
+        config::renogy::LOAD_ENABLE_SETTLE_MS;
+}
 ```
 
 ---
@@ -466,16 +473,20 @@ struct WateringRequest {
 - Raise `FaultCode::MaxDuration` if `MAX_DISPENSE_MS` is reached first
 - Re-check Renogy freshness and battery SOC while running
 - Record delivered milliliters from the flow meter on completion, cancel, or fault
+- Active shutdown is sequenced in reverse startup order: pump off, wait
+  `PUMP_STOP_TO_SOLENOID_CLOSE_MS`, close all solenoids, wait
+  `SOLENOID_CLOSE_TO_LOAD_DISABLE_MS`, then disable the Renogy load output
 
 **`Fault`:**
-- `enterFault()` records delivered volume, calls `stopAll()`, stores the fault code, and leaves the FSM latched in `Fault`
+- `enterFault()` records delivered volume, stops outputs, stores the fault code, and leaves the FSM latched in `Fault`
+- Faults before any output is energized use the same output-off calls without the graceful shutdown delays
 - `clearFault()` transitions `Fault` back to `Idle`
 - `cancel()` stops an active `Priming` or `Watering` cycle and returns to `Idle`
 
 ### Safety Interlock (enforced in firmware regardless of HA state)
 - Pump must NEVER run with all solenoids closed (dead-head risk)
 - Pump starts only after the Renogy load settle delay and after `zones_.open(req_.zone)` completes its solenoid pull-in interval in `request()`
-- `stopAll()` stops the pump, closes all zones, and disables the Renogy load
+- `stopAll()` stops the pump first, closes all zones after the configured settle delay, and disables the Renogy load last
 - Faults remain latched until an explicit clear command is received
 
 ---
@@ -946,6 +957,11 @@ Fault clear requested via Zone 1 OFF: water_low (2)
 Zone 1 status: idle -> priming
 Zone 1 status: priming -> running
 Zone 1 status: running -> idle
+Stopping pump
+Waiting 100 ms before closing solenoid
+Closing all solenoids
+Waiting 2000 ms before disabling Renogy load
+Disabling Renogy load
 Waterer state: priming
 Active zone: 1
 Waterer state: idle

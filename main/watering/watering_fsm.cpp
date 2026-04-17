@@ -10,6 +10,10 @@ namespace
     static const char *TAG = "WateringFsm";
 
     constexpr uint32_t LOAD_ENABLE_SETTLE_MS = config::renogy::LOAD_ENABLE_SETTLE_MS;
+    constexpr uint32_t PUMP_STOP_TO_SOLENOID_CLOSE_MS =
+        config::watering_sequence::PUMP_STOP_TO_SOLENOID_CLOSE_MS;
+    constexpr uint32_t SOLENOID_CLOSE_TO_LOAD_DISABLE_MS =
+        config::watering_sequence::SOLENOID_CLOSE_TO_LOAD_DISABLE_MS;
 
     void delayForTaskMs(uint32_t delayMs)
     {
@@ -213,15 +217,56 @@ void WateringFsm::cancel()
 
 void WateringFsm::stopAll()
 {
+    stopOutputs(true, true);
+}
+
+void WateringFsm::stopOutputs(bool useShutdownDelays, bool logSteps)
+{
+    if (logSteps)
+    {
+        ESP_LOGI(TAG, "Stopping pump");
+    }
     pump_.stop();
+
+    if (useShutdownDelays)
+    {
+        if (logSteps)
+        {
+            ESP_LOGI(TAG, "Waiting %lu ms before closing solenoid",
+                     static_cast<unsigned long>(PUMP_STOP_TO_SOLENOID_CLOSE_MS));
+        }
+        delayForTaskMs(PUMP_STOP_TO_SOLENOID_CLOSE_MS);
+    }
+
+    if (logSteps)
+    {
+        ESP_LOGI(TAG, "Closing all solenoids");
+    }
     zones_.closeAll();
+
+    if (useShutdownDelays)
+    {
+        if (logSteps)
+        {
+            ESP_LOGI(TAG, "Waiting %lu ms before disabling Renogy load",
+                     static_cast<unsigned long>(SOLENOID_CLOSE_TO_LOAD_DISABLE_MS));
+        }
+        delayForTaskMs(SOLENOID_CLOSE_TO_LOAD_DISABLE_MS);
+    }
+
+    if (logSteps)
+    {
+        ESP_LOGI(TAG, "Disabling Renogy load");
+    }
     renogy_.setLoad(false);
 }
 
 void WateringFsm::enterFault(FaultCode code)
 {
     deliveredMl_ = static_cast<uint32_t>(flow_.getMilliliters() + 0.5f);
-    stopAll();
+    const bool outputsMayBeActive =
+        zoneOwned_ || state_ == State::Priming || state_ == State::Watering;
+    stopOutputs(outputsMayBeActive, outputsMayBeActive);
     fault_ = code;
     state_ = State::Fault;
 }

@@ -8,6 +8,13 @@ public:
     int openCalls_     = 0;
     int closeCalls_    = 0;
     int closeAllCalls_ = 0;
+    int* sequence_     = nullptr;
+    int closeAllOrder_ = 0;
+
+    void attachSequence(int& sequence)
+    {
+        sequence_ = &sequence;
+    }
 
     void open(ZoneId id) override
     {
@@ -23,6 +30,9 @@ public:
     {
         open_.fill(false);
         closeAllCalls_++;
+        if (sequence_) {
+            closeAllOrder_ = ++(*sequence_);
+        }
     }
     bool isOpen(ZoneId id) const override
     {

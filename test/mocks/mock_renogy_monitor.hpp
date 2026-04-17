@@ -7,6 +7,9 @@ public:
     bool       setLoadResult_  = true;  // return value for setLoad()
     bool       lastLoadState_  = false; // last value passed to setLoad()
     int        setLoadCallCount_ = 0;
+    int*       sequence_ = nullptr;
+    int        loadOnOrder_ = 0;
+    int        loadOffOrder_ = 0;
 
     MockRenogyMonitor()
     {
@@ -19,10 +22,22 @@ public:
         return data_;
     }
 
+    void attachSequence(int& sequence)
+    {
+        sequence_ = &sequence;
+    }
+
     bool setLoad(bool on) override
     {
         lastLoadState_ = on;
         ++setLoadCallCount_;
+        if (sequence_) {
+            if (on) {
+                loadOnOrder_ = ++(*sequence_);
+            } else {
+                loadOffOrder_ = ++(*sequence_);
+            }
+        }
         return setLoadResult_;
     }
 };
