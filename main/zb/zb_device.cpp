@@ -6,6 +6,7 @@
 #include "zcl/esp_zigbee_zcl_analog_output.h"
 #include "zcl/esp_zigbee_zcl_power_config.h"
 #include "config.hpp"
+#include "esp_app_desc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <cstring>
@@ -17,6 +18,7 @@ static volatile bool s_joined = false;
 static volatile uint32_t s_joinedAtMs = 0;
 static uint8_t s_manufacturerName[33] = {};
 static uint8_t s_modelIdentifier[33] = {};
+static uint8_t s_swBuildId[33] = {};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -28,6 +30,13 @@ static void encodeZclString(uint8_t (&dst)[33], const char (&src)[N])
     memcpy(dst + 1, src, N - 1u);
 }
 
+static void encodeZclString(uint8_t (&dst)[33], const char* src)
+{
+    const size_t len = strnlen(src, sizeof(dst) - 1u);
+    dst[0] = static_cast<uint8_t>(len);
+    memcpy(dst + 1, src, len);
+}
+
 static void initIdentityStrings()
 {
     static bool initialized = false;
@@ -37,6 +46,7 @@ static void initIdentityStrings()
 
     encodeZclString(s_manufacturerName, config::zigbee::MANUFACTURER_NAME);
     encodeZclString(s_modelIdentifier, config::zigbee::MODEL_IDENTIFIER);
+    encodeZclString(s_swBuildId, esp_app_get_description()->version);
     initialized = true;
 }
 
@@ -388,6 +398,8 @@ void ZbDevice::buildBasicEp(esp_zb_ep_list_t* ep_list)
         ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, s_manufacturerName);
     esp_zb_basic_cluster_add_attr(basic_attrs,
         ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID, s_modelIdentifier);
+    esp_zb_basic_cluster_add_attr(basic_attrs,
+        ESP_ZB_ZCL_ATTR_BASIC_SW_BUILD_ID, s_swBuildId);
 
     esp_zb_cluster_list_t* cl = esp_zb_zcl_cluster_list_create();
     esp_zb_cluster_list_add_basic_cluster(cl,

@@ -266,6 +266,7 @@ The converter matches the Zigbee Basic cluster values:
 |---|---|
 | Manufacturer | `Ivanbuilds` |
 | Model identifier | `solar-plant-waterer` |
+| Software build ID | ESP-IDF `PROJECT_VER` / app description version (for tagged releases, the release tag such as `v1.0.1`) |
 
 ### Exposed HA Entities
 

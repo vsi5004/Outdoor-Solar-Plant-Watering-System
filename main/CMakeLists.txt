@@ -32,6 +32,7 @@ idf_component_register(
     REQUIRES
         driver
         esp_adc
+        esp_app_format
         esp_timer
         freertos
         nvs_flash

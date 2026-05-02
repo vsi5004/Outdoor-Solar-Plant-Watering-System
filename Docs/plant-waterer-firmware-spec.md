@@ -727,6 +727,7 @@ Zigbee2MQTT to match the external converter:
 |---|---|
 | Model identifier | `solar-plant-waterer` |
 | Manufacturer | `Ivanbuilds` |
+| Software build ID | ESP-IDF `PROJECT_VER` from `esp_app_get_description()->version` |
 
 Development recovery switch:
 
