@@ -116,6 +116,19 @@ function clampDurationSec(value) {
     return Math.min(durationMaxSec, Math.max(durationMinSec, numeric));
 }
 
+async function safeRead(endpoint, cluster, attributes) {
+    if (!endpoint) {
+        return;
+    }
+
+    try {
+        await endpoint.read(cluster, attributes);
+    } catch {
+        // Best-effort initialization only. Live reports continue to work even
+        // when a single read fails during configure/reconfigure.
+    }
+}
+
 const fromZigbee = [
     {
         cluster: 'genAnalogInput',
@@ -216,6 +229,26 @@ export default {
     model: 'solar-plant-waterer',
     vendor: 'Ivanbuilds',
     description: 'Solar plant watering controller',
+    configure: async (device) => {
+        const batteryEp = device.getEndpoint(20);
+        await safeRead(batteryEp, 'genPowerCfg', ['batteryPercentageRemaining', 'batteryVoltage']);
+        await safeRead(batteryEp, 'genAnalogInput', ['presentValue']);
+
+        for (const endpointId of Object.keys(analogInputByEndpoint).map(Number)) {
+            if (endpointId === 20) {
+                continue;
+            }
+            await safeRead(device.getEndpoint(endpointId), 'genAnalogInput', ['presentValue']);
+        }
+
+        for (const endpointId of Object.keys(durationByEndpoint).map(Number)) {
+            const endpoint = device.getEndpoint(endpointId);
+            await safeRead(endpoint, 'genOnOff', ['onOff']);
+            await safeRead(endpoint, 'genAnalogOutput', ['presentValue']);
+        }
+
+        await safeRead(device.getEndpoint(43), 'genOnOff', ['onOff']);
+    },
     fromZigbee,
     toZigbee,
     extend: [
