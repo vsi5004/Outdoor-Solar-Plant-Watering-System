@@ -247,6 +247,13 @@ cd ~/homeassistant
 docker compose restart zigbee2mqtt
 ```
 
+If you need to surgically remove a stale waterer entry after an endpoint-shape
+change, use:
+
+```bash
+./scripts/repair_z2m_waterer_state.sh ~/homeassistant/zigbee2mqtt-data
+```
+
 A healthy Zigbee2MQTT startup log contains:
 
 ```text
@@ -445,7 +452,7 @@ Hard constraints enforced in firmware regardless of HA state:
 - **Ordered shutdown** — active watering stops in reverse order: pump off,
   wait `PUMP_STOP_TO_SOLENOID_CLOSE_MS`, close solenoids, wait
   `SOLENOID_CLOSE_TO_LOAD_DISABLE_MS`, then disable the Renogy load output.
-- **Hardware cutoff** — pulling `DRV_MASTER_EN_PIN` LOW cuts all three BTS7960
+- **Hardware cutoff** — pulling `config::pins::DRV_MASTER_EN` LOW cuts all three BTS7960
   boards instantly. Normal firmware faults use the ordered shutdown sequence so
   the pump stops before the valve closes and the Renogy load turns off last.
 - **Battery gate** — watering is blocked below `MIN_BATTERY_SOC_PCT` (15%) to
@@ -460,6 +467,15 @@ Hard constraints enforced in firmware regardless of HA state:
   the Z2M data directory and remove only the stale entry for this device from
   Zigbee2MQTT state/database files before restarting. Stale endpoint/reporting
   metadata can keep Z2M trying to access endpoints that no longer exist.
+- `scripts/repair_z2m_waterer_state.sh` automates that cleanup for the default
+  plant waterer IEEE address by backing up `database.db` and `state.json` and
+  deleting only that device entry. Stop Zigbee2MQTT first, run the script on
+  the server, then start Zigbee2MQTT again.
 - For firmware-side stale Zigbee state, set
   `config::zigbee::ERASE_NVRAM_ON_BOOT = true`, flash once, let the device boot,
   then set it back to `false` and flash again.
+- Treat endpoint layout as a versioned contract. If a firmware change adds,
+  removes, or repurposes endpoints/clusters in a way that changes HA discovery,
+  bump `config::zigbee::MODEL_IDENTIFIER` and publish a matching new converter
+  model instead of silently reusing the old one. That avoids stale Zigbee2MQTT
+  metadata collisions on existing installations.

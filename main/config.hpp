@@ -35,16 +35,16 @@ namespace config
         constexpr int DRV_MASTER_EN = 21; // GPIO21
 
         // BTS7960 board #1 — left half: pump (LPWM hardwired GND) | right half: solenoid 5
-        constexpr int PUMP_RPWM = 7; // GPIO7   LEDC_CHANNEL_0
-        constexpr int SOL5_RPWM = 6; // GPIO6   LEDC_CHANNEL_1
+        constexpr int PUMP_RPWM = 7;  // GPIO7   LEDC_CHANNEL_0
+        constexpr int SOL5_RPWM = 11; // GPIO11  LEDC_CHANNEL_1
 
         // BTS7960 board #2 — left half: solenoid 1 | right half: solenoid 2
-        constexpr int SOL1_LPWM = 11; // GPIO11  LEDC_CHANNEL_2
-        constexpr int SOL2_RPWM = 18; // GPIO18  LEDC_CHANNEL_3
+        constexpr int SOL1_LPWM = 6;  // GPIO6  LEDC_CHANNEL_2
+        constexpr int SOL2_RPWM = 19; // GPIO19  LEDC_CHANNEL_3
 
         // BTS7960 board #3 — left half: solenoid 3 | right half: solenoid 4
-        constexpr int SOL3_LPWM = 19; // GPIO19  LEDC_CHANNEL_4
-        constexpr int SOL4_RPWM = 20; // GPIO20  LEDC_CHANNEL_5
+        constexpr int SOL3_LPWM = 20; // GPIO20  LEDC_CHANNEL_4
+        constexpr int SOL4_RPWM = 18; // GPIO18  LEDC_CHANNEL_5
 
     } // namespace pins
 
@@ -135,6 +135,9 @@ namespace config
     namespace zigbee
     {
         constexpr char MANUFACTURER_NAME[] = "Ivanbuilds";
+        // Treat the model identifier as part of the Zigbee2MQTT contract.
+        // If the endpoint shape changes incompatibly, bump this string and
+        // ship a matching converter update instead of reusing stale metadata.
         constexpr char MODEL_IDENTIFIER[] = "solar-plant-waterer";
 
         // Development recovery switch: set true, flash once, let the device

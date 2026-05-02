@@ -38,13 +38,14 @@ The firmware owns all timing and safety logic. Home Assistant writes optional pe
 
 ## Pin Assignment (`config.hpp`)
 
-All hardware mappings defined in one place. Based on the ESP32-C6-DevKitC-1 pinout.
+All hardware mappings are defined in one place. `main/config.hpp` is the source
+of truth and reflects the physical wiring on the current hardware.
 
 **Pins reserved / avoided:**
 - GPIO8 - onboard RGB status LED + boot strapping pin; do not wire an external load
 - GPIO9 — boot strapping pin
 - GPIO12/13 — USB D-/D+
-- GPIO15 — JTAG (leave free during development)
+- GPIO15 — external JTAG MTDI on the ESP32-C6, but used here for the flow meter PCNT input; do not attach a JTAG probe at the same time
 - GPIO16/17 — U0TXD/U0RXD debug serial (needed for `idf.py monitor`)
 
 **Enable wiring:** All six EN pins (L_EN + R_EN across all three boards) are wired together to a single GPIO. This gives a single firmware-controlled emergency shutoff for all motor drivers simultaneously.
@@ -74,15 +75,15 @@ All hardware mappings defined in one place. Based on the ESP32-C6-DevKitC-1 pino
 #define PUMP_LPWM_PIN       -1           // Hardwired to GND on board (no reverse)
 #define PUMP_RPWM_PIN       GPIO_NUM_7   // Pump speed control PWM
 #define SOL5_LPWM_PIN       -1           // Unused half — solenoid on right half only
-#define SOL5_RPWM_PIN       GPIO_NUM_6   // Solenoid 5 PWM
+#define SOL5_RPWM_PIN       GPIO_NUM_11  // Solenoid 5 PWM
 
 // BTS7960 #2 — Left half: Solenoid 1 | Right half: Solenoid 2
-#define SOL1_LPWM_PIN       GPIO_NUM_11  // Solenoid 1 PWM
-#define SOL2_RPWM_PIN       GPIO_NUM_18  // Solenoid 2 PWM
+#define SOL1_LPWM_PIN       GPIO_NUM_6   // Solenoid 1 PWM
+#define SOL2_RPWM_PIN       GPIO_NUM_19  // Solenoid 2 PWM
 
 // BTS7960 #3 — Left half: Solenoid 3 | Right half: Solenoid 4
-#define SOL3_LPWM_PIN       GPIO_NUM_19  // Solenoid 3 PWM
-#define SOL4_RPWM_PIN       GPIO_NUM_20  // Solenoid 4 PWM
+#define SOL3_LPWM_PIN       GPIO_NUM_20  // Solenoid 3 PWM
+#define SOL4_RPWM_PIN       GPIO_NUM_18  // Solenoid 4 PWM
 ```
 
 **GPIO summary:**
@@ -92,13 +93,13 @@ All hardware mappings defined in one place. Based on the ESP32-C6-DevKitC-1 pino
 | GPIO0 | Float sensor ADC | ADC1_CH0 |
 | GPIO4 | UART1 TX → Renogy | LP_UART_TXD |
 | GPIO5 | UART1 RX ← Renogy | LP_UART_RXD |
-| GPIO6 | DRV1 RPWM — Sol5 | PWM |
+| GPIO6 | DRV2 LPWM — Sol1 | PWM |
 | GPIO7 | DRV1 RPWM — Pump | PWM |
-| GPIO11 | DRV2 LPWM — Sol1 | PWM |
+| GPIO11 | DRV1 RPWM — Sol5 | PWM |
 | GPIO15 | Flow meter PCNT | JTAG MTDI — safe as GPIO when no probe attached |
-| GPIO18 | DRV2 RPWM — Sol2 | PWM |
-| GPIO19 | DRV3 LPWM — Sol3 | PWM |
-| GPIO20 | DRV3 RPWM — Sol4 | PWM |
+| GPIO18 | DRV3 RPWM — Sol4 | PWM |
+| GPIO19 | DRV2 RPWM — Sol2 | PWM |
+| GPIO20 | DRV3 LPWM — Sol3 | PWM |
 | GPIO21 | MASTER_EN all boards | All 6 EN pins wired to this |
 | GPIO16 | U0TXD debug serial | Reserved — do not use |
 | GPIO17 | U0RXD debug serial | Reserved — do not use |
@@ -229,7 +230,7 @@ keeps the safety logic host-testable.
 - `ZoneManager::closeAll()` is used by all fault, cancel, and normal-stop paths
 
 **LEDC configuration:**
-- Frequency: `config::ledc::FREQUENCY_HZ` (25 kHz)
+- Frequency: `config::ledc::FREQUENCY_HZ` (22 kHz)
 - Resolution: `config::ledc::RESOLUTION_BITS` (10-bit duty range)
 - Channels are assigned in `config::ledc` and kept one channel per active PWM output
 
@@ -399,11 +400,11 @@ solenoid actuators. The FSM never drives solenoids directly; it calls
 
 | Zone | Driver board | Half | PWM pin | Notes |
 |---|---|---|---|---|
-| 1 | BTS7960 #2 | Left | GPIO11 | LPWM |
-| 2 | BTS7960 #2 | Right | GPIO18 | RPWM |
-| 3 | BTS7960 #3 | Left | GPIO19 | LPWM |
-| 4 | BTS7960 #3 | Right | GPIO20 | RPWM |
-| 5 | BTS7960 #1 | Right | GPIO6 | RPWM; shares board with pump |
+| 1 | BTS7960 #2 | Left | GPIO6 | LPWM |
+| 2 | BTS7960 #2 | Right | GPIO19 | RPWM |
+| 3 | BTS7960 #3 | Left | GPIO20 | LPWM |
+| 4 | BTS7960 #3 | Right | GPIO18 | RPWM |
+| 5 | BTS7960 #1 | Right | GPIO11 | RPWM; shares board with pump |
 
 Public surface used by the FSM:
 
