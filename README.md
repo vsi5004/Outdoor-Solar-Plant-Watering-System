@@ -294,7 +294,10 @@ Zigbee2MQTT removes generic switch power-on behavior entities by using
 `m.onOff({powerOnBehavior: false})` in the converter. The converter also
 overrides Home Assistant discovery payload names for power and energy sensors so
 HA shows `PV power`, `Max charging power today`, `Daily solar generation`, and
-`Daily power consumption` instead of generic `Power` / `Energy` labels.
+`Daily power consumption` instead of generic `Power` / `Energy` labels. During
+`configure`, the converter also performs best-effort binds, reporting setup,
+and initial reads for the battery and aggregate analog-input endpoints so
+Zigbee2MQTT can populate state promptly after pairing or reconfigure.
 
 ### Fault Codes
 
@@ -328,7 +331,9 @@ water reports `waterer_state=fault` and `active_zone=none`.
 HA watering automations should check `waterer_state == idle` before calling a
 zone switch. Firmware still rejects overlapping zone commands without raising a
 fault, so this sensor is a clean automation guard rather than the only safety
-interlock.
+interlock. Bulk telemetry still waits for the post-join Zigbee interview grace
+period, but `fault_code`, `waterer_state`, and `active_zone` bypass that delay
+once the device has joined so faults and clears surface in HA immediately.
 
 ### Watering Durations
 

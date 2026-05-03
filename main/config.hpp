@@ -146,7 +146,8 @@ namespace config
         constexpr bool ERASE_NVRAM_ON_BOOT = false;
 
         // Give Zigbee2MQTT time to finish its interview before this custom
-        // device starts sending unsolicited attribute reports.
+        // device starts sending bulk unsolicited telemetry reports. Critical
+        // fault/state updates bypass this delay once the device has joined.
         constexpr uint32_t REPORT_DELAY_AFTER_JOIN_MS = 60'000;
     } // namespace zigbee
 

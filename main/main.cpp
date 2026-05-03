@@ -516,24 +516,15 @@ static void wateringTask(void * /*arg*/)
             }
         }
 
-        // Report zone status changes.
+        const FaultCode fault = s_fsm->getLastFault();
+        ZoneStatus currentStatus[ZONE_COUNT] = {};
         for (uint8_t i = 0; i < ZONE_COUNT; ++i)
         {
-            const auto zoneId = static_cast<ZoneId>(i + 1u);
-            const auto status = s_fsm->getZoneStatus(zoneId);
-            if (status != lastStatus[i])
-            {
-                ESP_LOGI(TAG, "Zone %u status: %s -> %s",
-                         static_cast<unsigned>(zoneId),
-                         zoneStatusName(lastStatus[i]),
-                         zoneStatusName(status));
-                lastStatus[i] = status;
-                ZbDevice::reportZoneStatus(zoneId, status);
-            }
+            currentStatus[i] = s_fsm->getZoneStatus(static_cast<ZoneId>(i + 1u));
         }
 
-        // Report fault changes.
-        const FaultCode fault = s_fsm->getLastFault();
+        // Push aggregate fault/state first so HA sees the high-level status
+        // change before the per-zone endpoint churn that accompanies it.
         if (fault != lastLoggedFault)
         {
             if (fault == FaultCode::None)
@@ -548,26 +539,42 @@ static void wateringTask(void * /*arg*/)
             }
             lastLoggedFault = fault;
         }
-        if (ZbDevice::reportsEnabled() && fault != lastReportedFault)
+        if (ZbDevice::criticalReportsEnabled() && fault != lastReportedFault)
         {
             lastReportedFault = fault;
             ZbDevice::reportFault(fault);
         }
 
-        const WatererStateCode watererState = watererStateFromStatuses(lastStatus, fault);
+        const WatererStateCode watererState = watererStateFromStatuses(currentStatus, fault);
         const uint8_t watererStateCode = static_cast<uint8_t>(watererState);
-        const uint8_t activeZone = activeZoneFromStatuses(lastStatus);
-        if (ZbDevice::reportsEnabled() && watererStateCode != lastReportedWatererState)
+        const uint8_t activeZone = activeZoneFromStatuses(currentStatus);
+        if (ZbDevice::criticalReportsEnabled() && watererStateCode != lastReportedWatererState)
         {
             ESP_LOGI(TAG, "Waterer state: %s", watererStateName(watererState));
             lastReportedWatererState = watererStateCode;
             ZbDevice::reportWatererState(watererStateCode);
         }
-        if (ZbDevice::reportsEnabled() && activeZone != lastReportedActiveZone)
+        if (ZbDevice::criticalReportsEnabled() && activeZone != lastReportedActiveZone)
         {
             ESP_LOGI(TAG, "Active zone: %u", static_cast<unsigned>(activeZone));
             lastReportedActiveZone = activeZone;
             ZbDevice::reportActiveZone(activeZone);
+        }
+
+        // Report zone status changes after the aggregate status has been sent.
+        for (uint8_t i = 0; i < ZONE_COUNT; ++i)
+        {
+            const auto zoneId = static_cast<ZoneId>(i + 1u);
+            const auto status = currentStatus[i];
+            if (status != lastStatus[i])
+            {
+                ESP_LOGI(TAG, "Zone %u status: %s -> %s",
+                         static_cast<unsigned>(zoneId),
+                         zoneStatusName(lastStatus[i]),
+                         zoneStatusName(status));
+                lastStatus[i] = status;
+                ZbDevice::reportZoneStatus(zoneId, status);
+            }
         }
 
         if (ZbDevice::reportsEnabled())

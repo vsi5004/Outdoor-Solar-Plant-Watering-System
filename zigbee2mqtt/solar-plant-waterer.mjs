@@ -129,6 +129,32 @@ async function safeRead(endpoint, cluster, attributes) {
     }
 }
 
+async function safeBind(endpoint, coordinatorEndpoint, cluster) {
+    if (!endpoint || !coordinatorEndpoint) {
+        return;
+    }
+
+    try {
+        await endpoint.bind(cluster, coordinatorEndpoint);
+    } catch {
+        // Binding is best-effort here; reads still allow the converter to
+        // populate state even if a specific binding fails.
+    }
+}
+
+async function safeConfigureReporting(endpoint, cluster, payload) {
+    if (!endpoint) {
+        return;
+    }
+
+    try {
+        await endpoint.configureReporting(cluster, payload);
+    } catch {
+        // Some stacks reject report config changes on custom endpoints. The
+        // converter still falls back to explicit reads in that case.
+    }
+}
+
 const fromZigbee = [
     {
         cluster: 'genAnalogInput',
@@ -229,8 +255,34 @@ export default {
     model: 'solar-plant-waterer',
     vendor: 'Ivanbuilds',
     description: 'Solar plant watering controller',
-    configure: async (device) => {
+    configure: async (device, coordinatorEndpoint) => {
+        for (const endpointId of [20, 41, 43]) {
+            const endpoint = device.getEndpoint(endpointId);
+            await safeBind(endpoint, coordinatorEndpoint, 'genAnalogInput');
+            await safeConfigureReporting(endpoint, 'genAnalogInput', [{
+                attribute: 'presentValue',
+                minimumReportInterval: 0,
+                maximumReportInterval: 30,
+                reportableChange: 0,
+            }]);
+        }
+
         const batteryEp = device.getEndpoint(20);
+        await safeBind(batteryEp, coordinatorEndpoint, 'genPowerCfg');
+        await safeConfigureReporting(batteryEp, 'genPowerCfg', [
+            {
+                attribute: 'batteryPercentageRemaining',
+                minimumReportInterval: 0,
+                maximumReportInterval: 30,
+                reportableChange: 1,
+            },
+            {
+                attribute: 'batteryVoltage',
+                minimumReportInterval: 0,
+                maximumReportInterval: 30,
+                reportableChange: 1,
+            },
+        ]);
         await safeRead(batteryEp, 'genPowerCfg', ['batteryPercentageRemaining', 'batteryVoltage']);
         await safeRead(batteryEp, 'genAnalogInput', ['presentValue']);
 

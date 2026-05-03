@@ -561,7 +561,7 @@ void app_main(void) {
 - `RenogyDriver::getData()` returns a mutex-protected copy of the latest Modbus snapshot
 - Zigbee commands are posted as `ZbWateringCmd` items so the Zigbee stack callback never blocks on watering or I/O work
 - Zigbee attribute writes use `esp_zb_lock_acquire` / `esp_zb_lock_release`
-- One-shot attribute reports are suppressed until the Zigbee interview grace period expires (`config::zigbee::REPORT_DELAY_AFTER_JOIN_MS`)
+- Bulk one-shot telemetry reports are suppressed until the Zigbee interview grace period expires (`config::zigbee::REPORT_DELAY_AFTER_JOIN_MS`), while critical fault/state updates are allowed immediately after join
 
 ### Status LED
 
@@ -688,6 +688,7 @@ void ZbDevice::reportWatererState(uint8_t stateCode);
 void ZbDevice::reportActiveZone(uint8_t zoneNumber);
 bool ZbDevice::isJoined();
 bool ZbDevice::reportsEnabled();
+bool ZbDevice::criticalReportsEnabled();
 ```
 
 ### Attribute Reporting Configuration
@@ -699,8 +700,10 @@ attributes.
 
 Sensor telemetry is pushed with one-shot `esp_zb_zcl_report_attr_cmd_req()`
 calls after `reportsEnabled()` returns true. The post-join delay gives
-Zigbee2MQTT time to finish the interview before the device starts sending
-unsolicited reports.
+Zigbee2MQTT time to finish the interview before the device starts sending bulk
+unsolicited reports. `fault_code`, `waterer_state`, and `active_zone` use the
+same one-shot path but bypass the grace period once the device has joined so HA
+does not sit on a 30-60 second stale fault view after boot or rejoin.
 
 Zone endpoints report On when the FSM state is `Priming` or `Running`, and Off
 when the state is `Idle` or `Fault`. The firmware sends these updates on every
@@ -784,6 +787,13 @@ m.onOff({
     powerOnBehavior: false,
 });
 ```
+
+During `configure(device, coordinatorEndpoint)`, the converter also performs
+best-effort binds and `configureReporting()` calls for the battery cluster on
+EP20 and the aggregate analog-input endpoints on EP20/41/43, then reads the
+live attribute values back. That gives Zigbee2MQTT current state immediately
+after pair/reconfigure even if a given endpoint rejects one of the reporting
+setup calls.
 
 Analog Input reports are decoded by source endpoint:
 

@@ -88,6 +88,10 @@ public:
     // True once the post-join interview grace period has elapsed.
     static bool reportsEnabled();
 
+    // True once the device has joined, even if the startup interview grace
+    // period for bulk telemetry is still in effect.
+    static bool criticalReportsEnabled();
+
     // Endpoint number for a given zone (EP = kZoneEpBase + zone_id value).
     static constexpr uint8_t zoneEp(ZoneId z)
     {

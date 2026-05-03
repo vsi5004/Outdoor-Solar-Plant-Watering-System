@@ -54,9 +54,11 @@ static void initIdentityStrings()
 // Called from configureReporting() (inside the signal handler) to replace any
 // stale entries that the previous firmware version may have written to
 // zb_storage. Without this, ZBOSS fires stale timers on rejoin and asserts.
-// min_interval=30 → floor of 30 s between reports even if the value changes.
-// max_interval=90 → heartbeat every 90 s regardless of change.
-static void registerAttrReporting(uint8_t ep, uint16_t cluster, uint16_t attrId)
+static void registerAttrReporting(uint8_t ep,
+                                  uint16_t cluster,
+                                  uint16_t attrId,
+                                  uint16_t minIntervalSec = 30,
+                                  uint16_t maxIntervalSec = 90)
 {
     esp_zb_zcl_reporting_info_t info  = {};
     info.direction                    = ESP_ZB_ZCL_REPORT_DIRECTION_SEND;
@@ -64,8 +66,8 @@ static void registerAttrReporting(uint8_t ep, uint16_t cluster, uint16_t attrId)
     info.cluster_id                   = cluster;
     info.cluster_role                 = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE;
     info.attr_id                      = attrId;
-    info.u.send_info.min_interval     = 30;
-    info.u.send_info.max_interval     = 90;
+    info.u.send_info.min_interval     = minIntervalSec;
+    info.u.send_info.max_interval     = maxIntervalSec;
     info.u.send_info.delta.u32        = 0;
     info.dst.short_addr               = 0x0000u;  // coordinator
     info.dst.endpoint                 = 1;
@@ -80,7 +82,23 @@ static void registerAnalogPresentValueReporting(uint8_t ep)
         ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
 }
 
+static void registerImmediateAnalogPresentValueReporting(uint8_t ep)
+{
+    registerAttrReporting(ep,
+        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
+        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
+        0,
+        30);
+}
+
 static void sendAttrReport(uint8_t srcEp, uint16_t cluster, uint16_t attrId);
+
+static bool allowsImmediateReporting(uint8_t ep)
+{
+    return ep == ZbDevice::kFaultEp ||
+           ep == ZbDevice::kWatererStateEp ||
+           ep == ZbDevice::kActiveZoneEp;
+}
 
 static void reportAnalogPresentValue(uint8_t ep, float value)
 {
@@ -101,7 +119,11 @@ static void reportAnalogPresentValue(uint8_t ep, float value)
 // Must only be called while the Zigbee lock is held and after network join.
 static void sendAttrReport(uint8_t srcEp, uint16_t cluster, uint16_t attrId)
 {
-    if (!ZbDevice::reportsEnabled()) {
+    if (!ZbDevice::isJoined()) {
+        return;
+    }
+
+    if (!allowsImmediateReporting(srcEp) && !ZbDevice::reportsEnabled()) {
         return;
     }
 
@@ -182,10 +204,10 @@ void ZbDevice::configureReporting()
     for (uint8_t i = ZONE_ID_MIN; i <= ZONE_ID_MAX; ++i) {
         registerAnalogPresentValueReporting(static_cast<uint8_t>(kZoneWaterTotalEpBase + i));
     }
-    registerAnalogPresentValueReporting(kFaultEp);
+    registerImmediateAnalogPresentValueReporting(kFaultEp);
     registerAnalogPresentValueReporting(kChargingStatusEp);
-    registerAnalogPresentValueReporting(kWatererStateEp);
-    registerAnalogPresentValueReporting(kActiveZoneEp);
+    registerImmediateAnalogPresentValueReporting(kWatererStateEp);
+    registerImmediateAnalogPresentValueReporting(kActiveZoneEp);
 
     s_joined = true;
     s_joinedAtMs = static_cast<uint32_t>(pdTICKS_TO_MS(xTaskGetTickCount()));
@@ -379,6 +401,11 @@ bool ZbDevice::reportsEnabled()
 
     const uint32_t nowMs = static_cast<uint32_t>(pdTICKS_TO_MS(xTaskGetTickCount()));
     return nowMs - s_joinedAtMs >= config::zigbee::REPORT_DELAY_AFTER_JOIN_MS;
+}
+
+bool ZbDevice::criticalReportsEnabled()
+{
+    return s_joined;
 }
 
 // ── Endpoint builders ─────────────────────────────────────────────────────────
