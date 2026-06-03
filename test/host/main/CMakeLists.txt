@@ -14,8 +14,10 @@ idf_component_register(
         "test_zone_manager.cpp"
         "test_watering_fsm.cpp"
         "test_water_usage_tracker.cpp"
+        "test_attr_echo_suppressor.cpp"
 
         # Driver sources under test (no hardware calls — injected via mocks)
+        "../../../main/zb/attr_echo_suppressor.cpp"
         "../../../main/drivers/solenoid_actuator.cpp"
         "../../../main/drivers/pump_actuator.cpp"
         "../../../main/drivers/flow_meter.cpp"

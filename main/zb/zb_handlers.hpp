@@ -1,4 +1,5 @@
 #pragma once
+#include "zb/attr_echo_suppressor.hpp"
 #include "esp_zigbee_core.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -37,13 +38,35 @@ public:
     static esp_err_t onAction(esp_zb_core_action_callback_id_t callback_id,
                                const void* message);
 
+    template <typename T>
+    static bool rememberLocalAttrWrite(uint8_t endpoint,
+                                       uint16_t clusterId,
+                                       uint16_t attrId,
+                                       const T& value)
+    {
+        return localAttrEchoes_.remember({endpoint, clusterId, attrId}, value);
+    }
+
+    static void clearLocalAttrWrite(uint8_t endpoint,
+                                    uint16_t clusterId,
+                                    uint16_t attrId);
+
 private:
     static QueueHandle_t cmdQueue_;
     static uint32_t      defaultDurationSec_;
     static uint32_t      zoneDurationSec_[ZONE_COUNT];
+    static AttrEchoSuppressor localAttrEchoes_;
 
     // Handle ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID — enqueues Request or Cancel.
     static esp_err_t handleSetAttr(const esp_zb_zcl_set_attr_value_message_t* p);
     static esp_err_t handleZoneDurationSet(const esp_zb_zcl_set_attr_value_message_t* p);
+    template <typename T>
+    static bool consumeLocalAttrWrite(uint8_t endpoint,
+                                      uint16_t clusterId,
+                                      uint16_t attrId,
+                                      const T& value)
+    {
+        return localAttrEchoes_.consume({endpoint, clusterId, attrId}, value);
+    }
     static uint32_t clampDurationSec(float requestedSec);
 };

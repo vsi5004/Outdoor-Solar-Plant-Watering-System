@@ -23,6 +23,9 @@ EspUart::EspUart(uart_port_t port, int txPin, int rxPin, uint32_t baudRate)
 
 void EspUart::write(const uint8_t* data, size_t len)
 {
+    if (data == nullptr || len == 0u) {
+        return;
+    }
     const int written = uart_write_bytes(port_, data, len);
     if (written < 0 || static_cast<size_t>(written) != len) {
         ESP_LOGE(TAG, "uart_write_bytes: requested %u wrote %d",
@@ -32,6 +35,9 @@ void EspUart::write(const uint8_t* data, size_t len)
 
 size_t EspUart::read(uint8_t* buf, size_t len, uint32_t timeoutMs)
 {
+    if (buf == nullptr || len == 0u) {
+        return 0u;
+    }
     const TickType_t ticks = pdMS_TO_TICKS(timeoutMs);
     const int n = uart_read_bytes(port_, buf, static_cast<uint32_t>(len), ticks);
     return (n > 0) ? static_cast<size_t>(n) : 0u;
@@ -39,5 +45,8 @@ size_t EspUart::read(uint8_t* buf, size_t len, uint32_t timeoutMs)
 
 void EspUart::flushRx()
 {
-    uart_flush_input(port_);
+    const esp_err_t err = uart_flush_input(port_);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "uart_flush_input failed: %s", esp_err_to_name(err));
+    }
 }

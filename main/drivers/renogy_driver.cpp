@@ -66,18 +66,21 @@ bool RenogyDriver::poll()
     d.chargingStatus         = static_cast<uint8_t>(s[0] & 0xFF);              // 0x0120 low byte
     d.lastUpdateMs           = static_cast<uint32_t>(pdTICKS_TO_MS(xTaskGetTickCount()));
 
-    xSemaphoreTake(mutex_, portMAX_DELAY);
-    data_ = d;
-    xSemaphoreGive(mutex_);
+    if (xSemaphoreTake(mutex_, portMAX_DELAY) == pdTRUE) {
+        data_ = d;
+        xSemaphoreGive(mutex_);
+    }
 
     return true;
 }
 
 RenogyData RenogyDriver::getData() const
 {
-    xSemaphoreTake(mutex_, portMAX_DELAY);
-    const RenogyData copy = data_;
-    xSemaphoreGive(mutex_);
+    RenogyData copy = data_;
+    if (xSemaphoreTake(mutex_, portMAX_DELAY) == pdTRUE) {
+        copy = data_;
+        xSemaphoreGive(mutex_);
+    }
     return copy;
 }
 
@@ -149,6 +152,10 @@ bool RenogyDriver::setLoad(bool on)
 
 bool RenogyDriver::readRegisters(uint16_t startReg, uint8_t count, uint16_t* out)
 {
+    if (count == 0u || out == nullptr) {
+        return false;
+    }
+
     uint8_t request[8];
     buildRequest(request, config::renogy::MODBUS_ADDR, startReg, count);
 
@@ -157,6 +164,9 @@ bool RenogyDriver::readRegisters(uint16_t startReg, uint8_t count, uint16_t* out
 
     // Response: addr(1) + fc(1) + byte_count(1) + data(count×2) + crc(2)
     const size_t responseLen = 5u + static_cast<size_t>(count) * 2u;
+    if (responseLen > MAX_RESPONSE_BYTES) {
+        return false;
+    }
     uint8_t response[MAX_RESPONSE_BYTES] = {};
 
     const size_t received = uart_.read(response, responseLen,
@@ -206,8 +216,13 @@ bool RenogyDriver::parseResponse(const uint8_t* buf, size_t len,
                                  uint8_t addr, uint8_t expectedCount,
                                  uint16_t* out)
 {
+    if (buf == nullptr || out == nullptr || expectedCount == 0u) {
+        return false;
+    }
+
     // Minimum viable frame: addr + fc + byte_count + 2 data bytes + 2 CRC
     if (len < 7) return false;
+    if (len != 5u + static_cast<size_t>(expectedCount) * 2u) return false;
 
     if (buf[0] != addr)   return false; // wrong device address
     if (buf[1] != 0x03)   return false; // wrong function code

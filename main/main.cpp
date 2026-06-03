@@ -1,5 +1,7 @@
 #include <cstdint>
 #include <atomic>
+#include <cstring>
+#include <optional>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -199,11 +201,11 @@ static SolenoidActuator s_sol3(s_sol3Pwm);
 static SolenoidActuator s_sol4(s_sol4Pwm);
 static SolenoidActuator s_sol5(s_sol5Pwm);
 
-// ADC channels — created after the unit is initialised in app_main.
-static EspAdcChannel *s_floatAdcCh = nullptr; // ADC1_CH0 — float sensor
-
-static PumpActuator *s_pump = nullptr;
-static FloatSensor *s_tank = nullptr;
+// Runtime-emplaced static storage for objects that depend on handles created
+// in app_main(). This preserves deterministic lifetime without heap use.
+static std::optional<EspAdcChannel> s_floatAdcCh; // ADC1_CH0 — float sensor
+static std::optional<PumpActuator> s_pump;
+static std::optional<FloatSensor> s_tank;
 
 // Flow meter
 static EspPcnt s_pcnt(config::pins::FLOW_METER);
@@ -216,9 +218,9 @@ static EspUart s_uart(static_cast<uart_port_t>(config::pins::RENOGY_UART),
                       config::renogy::BAUD_RATE);
 static RenogyDriver s_renogy(s_uart);
 
-// Zone manager and FSM (built after ADC objects are ready)
-static ZoneManager *s_zones = nullptr;
-static WateringFsm *s_fsm = nullptr;
+// Zone manager and FSM (emplaced after ADC/pump/tank objects are ready)
+static std::optional<ZoneManager> s_zones;
+static std::optional<WateringFsm> s_fsm;
 static WaterUsageTracker s_waterUsage;
 
 static void loadWaterUsageTotals()
@@ -290,8 +292,14 @@ static void saveWaterUsageTotal(ZoneId zone)
 
 extern "C" void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
 {
-    const auto sig = static_cast<esp_zb_app_signal_type_t>(
-        *reinterpret_cast<uint32_t *>(signal_struct->p_app_signal));
+    if (signal_struct == nullptr || signal_struct->p_app_signal == nullptr) {
+        ESP_LOGW(TAG, "Ignored null Zigbee app signal");
+        return;
+    }
+
+    uint32_t rawSignal = 0u;
+    memcpy(&rawSignal, signal_struct->p_app_signal, sizeof(rawSignal));
+    const auto sig = static_cast<esp_zb_app_signal_type_t>(rawSignal);
 
     switch (sig)
     {
@@ -711,16 +719,16 @@ extern "C" void app_main(void)
 
     EspAdcChannel::configChannel(adc1, ADC_CHANNEL_0); // float sensor
 
-    // ADC channel objects (heap-allocated; live forever).
-    s_floatAdcCh = new EspAdcChannel(adc1, ADC_CHANNEL_0, cali1, config::adc::OVERSAMPLE_COUNT);
+    // ADC channel object in static storage.
+    s_floatAdcCh.emplace(adc1, ADC_CHANNEL_0, cali1, config::adc::OVERSAMPLE_COUNT);
 
     // Pump and tank sensor.
-    s_pump = new PumpActuator(s_pumpPwm);
-    s_tank = new FloatSensor(*s_floatAdcCh);
+    s_pump.emplace(s_pumpPwm);
+    s_tank.emplace(*s_floatAdcCh);
 
     // Zone manager and FSM.
-    s_zones = new ZoneManager({&s_sol1, &s_sol2, &s_sol3, &s_sol4, &s_sol5});
-    s_fsm = new WateringFsm(*s_zones, *s_pump, s_flow, *s_tank, s_renogy);
+    s_zones.emplace(std::array<SolenoidActuator*, ZONE_COUNT>{&s_sol1, &s_sol2, &s_sol3, &s_sol4, &s_sol5});
+    s_fsm.emplace(*s_zones, *s_pump, s_flow, *s_tank, s_renogy);
 
     // Enable the BTS7960 master-enable line (all three boards).
     s_drvMasterEn.setHigh();
@@ -735,10 +743,10 @@ extern "C" void app_main(void)
 
     // ── Tasks ─────────────────────────────────────────────────────────────────
 
-    xTaskCreate(zbTask, "zb", 6144, nullptr, 5, nullptr);
-    xTaskCreate(wateringTask, "water", 4096, nullptr, 3, nullptr);
-    xTaskCreate(renogyTask, "renogy", 3072, nullptr, 2, nullptr);
-    xTaskCreate(StatusLed::runTask, "led", 2048, nullptr, 1, nullptr);
+    configASSERT(xTaskCreate(zbTask, "zb", 6144, nullptr, 5, nullptr) == pdPASS);
+    configASSERT(xTaskCreate(wateringTask, "water", 4096, nullptr, 3, nullptr) == pdPASS);
+    configASSERT(xTaskCreate(renogyTask, "renogy", 3072, nullptr, 2, nullptr) == pdPASS);
+    configASSERT(xTaskCreate(StatusLed::runTask, "led", 2048, nullptr, 1, nullptr) == pdPASS);
 
     ESP_LOGI(TAG, "All tasks started");
 }

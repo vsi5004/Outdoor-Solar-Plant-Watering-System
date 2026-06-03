@@ -10,6 +10,7 @@ static const char* TAG = "ZbHandlers";
 QueueHandle_t ZbHandlers::cmdQueue_           = nullptr;
 uint32_t      ZbHandlers::defaultDurationSec_ = config::pump::DEFAULT_WATERING_DURATION_SEC;
 uint32_t      ZbHandlers::zoneDurationSec_[ZONE_COUNT] = {};
+AttrEchoSuppressor ZbHandlers::localAttrEchoes_ = {};
 
 void ZbHandlers::init(QueueHandle_t cmdQueue, uint32_t defaultDurationSec)
 {
@@ -18,6 +19,7 @@ void ZbHandlers::init(QueueHandle_t cmdQueue, uint32_t defaultDurationSec)
     for (uint8_t i = 0; i < ZONE_COUNT; ++i) {
         zoneDurationSec_[i] = defaultDurationSec_;
     }
+    localAttrEchoes_.reset();
 }
 
 esp_err_t ZbHandlers::onAction(esp_zb_core_action_callback_id_t callback_id,
@@ -34,7 +36,18 @@ esp_err_t ZbHandlers::onAction(esp_zb_core_action_callback_id_t callback_id,
 
 esp_err_t ZbHandlers::handleSetAttr(const esp_zb_zcl_set_attr_value_message_t* p)
 {
+    if (p == nullptr) {
+        ESP_LOGW(TAG, "Ignored null set-attr callback");
+        return ESP_ERR_INVALID_ARG;
+    }
     if (!cmdQueue_) return ESP_OK;
+    if (p->info.status != ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGW(TAG, "Ignored set-attr callback with status 0x%02x on EP%u cluster=0x%04x",
+                 static_cast<unsigned>(p->info.status),
+                 p->info.dst_endpoint,
+                 p->info.cluster);
+        return ESP_OK;
+    }
 
     const uint8_t ep = p->info.dst_endpoint;
 
@@ -45,8 +58,20 @@ esp_err_t ZbHandlers::handleSetAttr(const esp_zb_zcl_set_attr_value_message_t* p
     // Only care about On/Off cluster on zone endpoints (EP 10–14) and EP43.
     if (p->info.cluster != ESP_ZB_ZCL_CLUSTER_ID_ON_OFF)         return ESP_OK;
     if (p->attribute.id != ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID)     return ESP_OK;
+    if (p->attribute.data.value == nullptr) {
+        ESP_LOGW(TAG, "Ignored On/Off write on EP%u with null payload", ep);
+        return ESP_OK;
+    }
 
     const bool on = (*static_cast<const uint8_t*>(p->attribute.data.value) != 0u);
+    if (consumeLocalAttrWrite(ep,
+                              p->info.cluster,
+                              p->attribute.id,
+                              static_cast<uint8_t>(on ? 1u : 0u))) {
+        ESP_LOGD(TAG, "Ignored local attr echo on EP%u cluster=0x%04x attr=0x%04x",
+                 ep, p->info.cluster, p->attribute.id);
+        return ESP_OK;
+    }
 
     if (ep == ZbDevice::kClearFaultEp) {
         if (!on) {
@@ -84,8 +109,20 @@ esp_err_t ZbHandlers::handleSetAttr(const esp_zb_zcl_set_attr_value_message_t* p
     return ESP_OK;
 }
 
+void ZbHandlers::clearLocalAttrWrite(uint8_t endpoint,
+                                     uint16_t clusterId,
+                                     uint16_t attrId)
+{
+    localAttrEchoes_.clear({endpoint, clusterId, attrId});
+}
+
 esp_err_t ZbHandlers::handleZoneDurationSet(const esp_zb_zcl_set_attr_value_message_t* p)
 {
+    if (p == nullptr) {
+        ESP_LOGW(TAG, "Ignored null duration write callback");
+        return ESP_ERR_INVALID_ARG;
+    }
+
     if (p->attribute.id != ESP_ZB_ZCL_ATTR_ANALOG_OUTPUT_PRESENT_VALUE_ID) {
         return ESP_OK;
     }

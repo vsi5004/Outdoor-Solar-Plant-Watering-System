@@ -9,13 +9,14 @@
 #include "esp_app_desc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <atomic>
 #include <cstring>
 #include <esp_log.h>
 
 static const char* TAG = "ZbDevice";
 
-static volatile bool s_joined = false;
-static volatile uint32_t s_joinedAtMs = 0;
+static std::atomic_bool s_joined{false};
+static std::atomic<uint32_t> s_joinedAtMs{0u};
 static uint8_t s_manufacturerName[33] = {};
 static uint8_t s_modelIdentifier[33] = {};
 static uint8_t s_swBuildId[33] = {};
@@ -32,6 +33,10 @@ static void encodeZclString(uint8_t (&dst)[33], const char (&src)[N])
 
 static void encodeZclString(uint8_t (&dst)[33], const char* src)
 {
+    if (src == nullptr) {
+        dst[0] = 0u;
+        return;
+    }
     const size_t len = strnlen(src, sizeof(dst) - 1u);
     dst[0] = static_cast<uint8_t>(len);
     memcpy(dst + 1, src, len);
@@ -93,6 +98,30 @@ static void registerImmediateAnalogPresentValueReporting(uint8_t ep)
 
 static void sendAttrReport(uint8_t srcEp, uint16_t cluster, uint16_t attrId);
 
+static bool setClusterAttribute(uint8_t ep,
+                                uint16_t cluster,
+                                uint16_t attrId,
+                                void* value,
+                                const char* context)
+{
+    const esp_zb_zcl_status_t status = esp_zb_zcl_set_attribute_val(ep,
+        cluster,
+        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        attrId,
+        value,
+        false);
+    if (status != ESP_ZB_ZCL_STATUS_SUCCESS) {
+        ESP_LOGW(TAG, "%s failed ep=%u cluster=0x%04x attr=0x%04x: 0x%02x",
+                 context,
+                 ep,
+                 cluster,
+                 attrId,
+                 static_cast<unsigned>(status));
+        return false;
+    }
+    return true;
+}
+
 static bool allowsImmediateReporting(uint8_t ep)
 {
     return ep == ZbDevice::kFaultEp ||
@@ -103,15 +132,15 @@ static bool allowsImmediateReporting(uint8_t ep)
 static void reportAnalogPresentValue(uint8_t ep, float value)
 {
     esp_zb_lock_acquire(portMAX_DELAY);
-    esp_zb_zcl_set_attribute_val(ep,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
-        &value,
-        false);
-    sendAttrReport(ep,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
+    if (setClusterAttribute(ep,
+                            ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
+                            ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
+                            &value,
+                            "Analog report")) {
+        sendAttrReport(ep,
+            ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
+            ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
+    }
     esp_zb_lock_release();
 }
 
@@ -209,8 +238,9 @@ void ZbDevice::configureReporting()
     registerImmediateAnalogPresentValueReporting(kWatererStateEp);
     registerImmediateAnalogPresentValueReporting(kActiveZoneEp);
 
-    s_joined = true;
-    s_joinedAtMs = static_cast<uint32_t>(pdTICKS_TO_MS(xTaskGetTickCount()));
+    s_joinedAtMs.store(static_cast<uint32_t>(pdTICKS_TO_MS(xTaskGetTickCount())),
+                       std::memory_order_relaxed);
+    s_joined.store(true, std::memory_order_release);
     ESP_LOGI(TAG, "Network joined — reporting configured");
 }
 
@@ -220,15 +250,23 @@ void ZbDevice::reportZoneStatus(ZoneId zone, ZoneStatus status)
     uint8_t       on = (status == ZoneStatus::Running || status == ZoneStatus::Priming) ? 1u : 0u;
 
     esp_zb_lock_acquire(portMAX_DELAY);
-    esp_zb_zcl_set_attribute_val(ep,
+    ZbHandlers::rememberLocalAttrWrite(ep,
         ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
-        &on,
-        false);
-    sendAttrReport(ep,
-        ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
-        ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+        on);
+    if (setClusterAttribute(ep,
+                            ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+                            ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
+                            &on,
+                            "Zone status update")) {
+        sendAttrReport(ep,
+            ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+            ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+    } else {
+        ZbHandlers::clearLocalAttrWrite(ep,
+            ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+            ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+    }
     esp_zb_lock_release();
 }
 
@@ -246,21 +284,21 @@ void ZbDevice::reportBattery(uint8_t socPct, float voltageV)
     uint8_t zbVoltage = static_cast<uint8_t>(voltageV * 10.0f + 0.5f);
 
     esp_zb_lock_acquire(portMAX_DELAY);
-    esp_zb_zcl_set_attribute_val(kBatteryEp,
+    const bool updatedPct = setClusterAttribute(kBatteryEp,
         ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID,
         &zbPct,
-        false);
-    esp_zb_zcl_set_attribute_val(kBatteryEp,
+        "Battery percentage update");
+    setClusterAttribute(kBatteryEp,
         ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_VOLTAGE_ID,
         &zbVoltage,
-        false);
-    sendAttrReport(kBatteryEp,
-        ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
-        ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID);
+        "Battery voltage update");
+    if (updatedPct) {
+        sendAttrReport(kBatteryEp,
+            ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG,
+            ESP_ZB_ZCL_ATTR_POWER_CONFIG_BATTERY_PERCENTAGE_REMAINING_ID);
+    }
     esp_zb_lock_release();
 }
 
@@ -289,70 +327,31 @@ void ZbDevice::reportSolarData(float batteryVoltageV,
     float statusF   = static_cast<float>(chargingStatus);
 
     esp_zb_lock_acquire(portMAX_DELAY);
-    esp_zb_zcl_set_attribute_val(kBatteryVoltEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
-        &batteryVoltageF, false);
-    esp_zb_zcl_set_attribute_val(kPvVoltEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
-        &pvVoltageF, false);
-    esp_zb_zcl_set_attribute_val(kPvPowerEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
-        &pvPowerF, false);
-    esp_zb_zcl_set_attribute_val(kControllerTempEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
-        &controllerTempF, false);
-    esp_zb_zcl_set_attribute_val(kMaxChargePowerEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
-        &maxPowerF, false);
-    esp_zb_zcl_set_attribute_val(kDailyGenEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
-        &genF, false);
-    esp_zb_zcl_set_attribute_val(kDailyConEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
-        &conF, false);
-    esp_zb_zcl_set_attribute_val(kChargingStatusEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
-        &statusF, false);
-    sendAttrReport(kBatteryVoltEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
-    sendAttrReport(kPvVoltEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
-    sendAttrReport(kPvPowerEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
-    sendAttrReport(kControllerTempEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
-    sendAttrReport(kMaxChargePowerEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
-    sendAttrReport(kDailyGenEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
-    sendAttrReport(kDailyConEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
-    sendAttrReport(kChargingStatusEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
-        ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
+    const struct AnalogUpdate {
+        uint8_t ep;
+        float* value;
+        const char* context;
+    } updates[] = {
+        {kBatteryVoltEp, &batteryVoltageF, "Battery volts telemetry update"},
+        {kPvVoltEp, &pvVoltageF, "PV volts telemetry update"},
+        {kPvPowerEp, &pvPowerF, "PV power telemetry update"},
+        {kControllerTempEp, &controllerTempF, "Controller temp telemetry update"},
+        {kMaxChargePowerEp, &maxPowerF, "Max charge power telemetry update"},
+        {kDailyGenEp, &genF, "Daily generation telemetry update"},
+        {kDailyConEp, &conF, "Daily consumption telemetry update"},
+        {kChargingStatusEp, &statusF, "Charging status telemetry update"},
+    };
+    for (const auto& update : updates) {
+        if (setClusterAttribute(update.ep,
+                                ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
+                                ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID,
+                                update.value,
+                                update.context)) {
+            sendAttrReport(update.ep,
+                ESP_ZB_ZCL_CLUSTER_ID_ANALOG_INPUT,
+                ESP_ZB_ZCL_ATTR_ANALOG_INPUT_PRESENT_VALUE_ID);
+        }
+    }
     esp_zb_lock_release();
 }
 
@@ -376,36 +375,44 @@ void ZbDevice::resetClearFaultTrigger()
     uint8_t off = 0u;
 
     esp_zb_lock_acquire(portMAX_DELAY);
-    esp_zb_zcl_set_attribute_val(kClearFaultEp,
+    ZbHandlers::rememberLocalAttrWrite(kClearFaultEp,
         ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
         ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
-        &off,
-        false);
-    sendAttrReport(kClearFaultEp,
-        ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
-        ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+        off);
+    if (setClusterAttribute(kClearFaultEp,
+                            ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+                            ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
+                            &off,
+                            "Clear-fault trigger reset")) {
+        sendAttrReport(kClearFaultEp,
+            ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+            ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+    } else {
+        ZbHandlers::clearLocalAttrWrite(kClearFaultEp,
+            ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+            ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID);
+    }
     esp_zb_lock_release();
 }
 
 bool ZbDevice::isJoined()
 {
-    return s_joined;
+    return s_joined.load(std::memory_order_acquire);
 }
 
 bool ZbDevice::reportsEnabled()
 {
-    if (!s_joined) {
+    if (!s_joined.load(std::memory_order_acquire)) {
         return false;
     }
 
     const uint32_t nowMs = static_cast<uint32_t>(pdTICKS_TO_MS(xTaskGetTickCount()));
-    return nowMs - s_joinedAtMs >= config::zigbee::REPORT_DELAY_AFTER_JOIN_MS;
+    return nowMs - s_joinedAtMs.load(std::memory_order_relaxed) >= config::zigbee::REPORT_DELAY_AFTER_JOIN_MS;
 }
 
 bool ZbDevice::criticalReportsEnabled()
 {
-    return s_joined;
+    return s_joined.load(std::memory_order_acquire);
 }
 
 // ── Endpoint builders ─────────────────────────────────────────────────────────

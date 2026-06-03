@@ -23,6 +23,7 @@ idf_component_register(
         "watering/water_usage_tracker.cpp"
 
         # Zigbee layer
+        "zb/attr_echo_suppressor.cpp"
         "zb/zb_device.cpp"
         "zb/zb_handlers.cpp"
 

@@ -37,12 +37,18 @@ void StatusLed::setState(State s)
 
 void StatusLed::setPixel(uint8_t r, uint8_t g, uint8_t b)
 {
+    if (s_strip == nullptr) {
+        return;
+    }
     led_strip_set_pixel(s_strip, 0, r, g, b);
     led_strip_refresh(s_strip);
 }
 
 void StatusLed::off()
 {
+    if (s_strip == nullptr) {
+        return;
+    }
     led_strip_clear(s_strip);
 }
 
